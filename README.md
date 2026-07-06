@@ -66,3 +66,8 @@ src-tauri/src/
   settings.rs         persisted settings
   history.rs          download history
 ```
+
+## License
+
+[MIT](LICENSE)
+
