@@ -60,7 +60,8 @@ export function Sidebar() {
             />
           </button>
           <div className="text-sm font-bold leading-tight">
-            <span className="text-muted-foreground">/ </span>MediaFetch
+            <span className="text-muted-foreground">/ </span>
+            {t("brand.name")}
           </div>
           <div className="text-[10px] text-muted-foreground">
             {appUpdate ? `v${appUpdate.currentVersion} · ` : ""}yt-dlp · ffmpeg

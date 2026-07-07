@@ -317,7 +317,7 @@ function AppUpdateCard() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-semibold">MediaFetch</span>
+                <span className="font-semibold">{t("brand.name")}</span>
                 {appUpdate.updateAvailable ? (
                   <Badge className="gap-1">
                     <ArrowUpCircle className="h-3 w-3" /> {t("c.updateAvailable")}

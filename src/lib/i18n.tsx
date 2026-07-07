@@ -6,6 +6,9 @@ import { useApp } from "./store";
 export type Lang = "en" | "uk" | "ru";
 
 const en = {
+  // Brand
+  "brand.name": "MediaFetch",
+
   // Sidebar
   "nav.download": "Download",
   "nav.queue": "Queue",
@@ -302,6 +305,8 @@ const en = {
 export type MsgKey = keyof typeof en;
 
 const uk: Record<MsgKey, string> = {
+  "brand.name": "МедіяФетч",
+
   "nav.download": "Завантаження",
   "nav.queue": "Черга",
   "nav.history": "Історія",
@@ -584,6 +589,8 @@ const uk: Record<MsgKey, string> = {
 };
 
 const ru: Record<MsgKey, string> = {
+  "brand.name": "МедияФэтч",
+
   "nav.download": "Загрузка",
   "nav.queue": "Очередь",
   "nav.history": "История",
