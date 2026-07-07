@@ -68,7 +68,9 @@ Versions are driven by git tags. To publish a release:
 
 1. Bump `version` in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json` (keep them in sync).
 2. Commit, then tag and push: `git tag v0.2.0 && git push --tags`.
-3. The **Release** GitHub Actions workflow builds the Windows NSIS installer and the macOS universal DMG and publishes both at [Releases](https://github.com/sergioalexo/mediafetch/releases). The macOS build is unsigned — first launch requires right-click → Open.
+3. The **Release** GitHub Actions workflow builds the Windows NSIS installer and the macOS universal DMG and publishes both at [Releases](https://github.com/sergioalexo/mediafetch/releases).
+
+The macOS build is not notarized by Apple, so the first launch is blocked by Gatekeeper: open **System Settings → Privacy & Security** and click **"Open Anyway"** next to the MediaFetch message (on macOS Sonoma and older: right-click the app → Open → Open), or run `xattr -cr /Applications/MediaFetch.app`. This is only needed once per install.
 
 The app checks the latest GitHub release on startup and shows an update notice on the Components page, where it can download and install the update in place (updater artifacts are signed in CI with the `TAURI_SIGNING_PRIVATE_KEY` repository secret; the private key lives in `~/.tauri/mediafetch.key` — **keep a backup, without it updates can't be signed**).
 
