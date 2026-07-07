@@ -13,7 +13,12 @@ import type {
 } from "./types";
 import * as api from "./api";
 import { translate, type MsgKey } from "./i18n";
-import { isAlreadyDownloaded, optionsFromPreset, sourceAbrOf } from "./presets";
+import {
+  isAlreadyDownloaded,
+  optionsFromPreset,
+  presetIdForUrl,
+  sourceAbrOf,
+} from "./presets";
 import { extractUrls } from "./utils";
 
 export type Page = "downloads" | "history" | "stats" | "settings" | "binaries";
@@ -124,12 +129,20 @@ export const useApp = create<AppState>((set, get) => ({
   addUrls: (text) => {
     const urls = extractUrls(text);
     const existing = new Set(get().drafts.map((d) => d.url));
+    const s = get().settings;
     const fresh: Draft[] = urls
       .filter((u) => !existing.has(u))
       .map((url) => ({
         id: `d${++draftSeq}`,
         url,
-        presetId: get().settings?.defaultPresetId ?? "",
+        // Service-specific default preset (e.g. Instagram -> video,
+        // YouTube Music -> audio), falling back to the global default.
+        presetId: presetIdForUrl(
+          url,
+          s?.servicePresets ?? {},
+          s?.defaultPresetId ?? "",
+          (id) => !!s?.presets.some((p) => p.id === id)
+        ),
         status: "analyzing",
         result: null,
         selected: [],

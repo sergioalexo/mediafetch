@@ -255,6 +255,45 @@ const en = {
   "set.newPreset": "New preset",
   "set.defaultPreset": "Default preset",
 
+  // Per-service defaults
+  "set.servicePresets": "Service defaults",
+  "set.servicePresetsHint":
+    "Pick which preset a pasted link uses based on the site it comes from",
+  "set.useGlobalDefault": "Global default",
+
+  // Tooltips
+  "tip.presetBar": "Preset applied to newly pasted links (per-service defaults override this)",
+  "tip.editPreset": "Edit the selected preset",
+  "tip.newPreset": "Create a new preset",
+  "tip.downloadAll": "Start downloading every staged item",
+  "tip.downloadNext": "Start only the next staged item",
+  "tip.downloadOne": "Download this item",
+  "tip.removeDraft": "Remove from the list (does not download)",
+  "tip.draftPreset": "Preset used for this item",
+  "tip.rollback": "Swap back to the previously installed version",
+  "tip.otherVersion": "Install a specific older release",
+
+  // Filename template helper
+  "tpl.info": "Template guide",
+  "tpl.intro":
+    "The filename is built from yt-dlp fields. Click an example to use it. Fields with a comma fall back to the next one when missing.",
+  "tpl.fields": "Common fields",
+  "tpl.f.title": "track / video title",
+  "tpl.f.artist": "artist (music platforms)",
+  "tpl.f.uploader": "channel / account name",
+  "tpl.f.artistFallback": "artist, or uploader when there is no artist",
+  "tpl.f.album": "album name",
+  "tpl.f.id": "unique video id",
+  "tpl.f.ext": "file extension (required at the end)",
+  "tpl.f.index": "position in the playlist",
+  "tpl.f.date": "upload date (YYYYMMDD)",
+  "tpl.examples": "Examples",
+  "tpl.e.artistTitle": "Artist - Title (default)",
+  "tpl.e.titleId": "Title [id] — avoids name clashes",
+  "tpl.e.numbered": "Numbered playlist tracks",
+  "tpl.e.dated": "Date + title",
+  "tpl.use": "Use",
+
   // Store toasts
   "t.downloadComplete": "Download complete",
   "t.downloadFailed": "Download failed",
@@ -503,6 +542,43 @@ const uk: Record<MsgKey, string> = {
   "set.newPreset": "Новий пресет",
   "set.defaultPreset": "Пресет за замовчуванням",
 
+  "set.servicePresets": "За сервісами",
+  "set.servicePresetsHint":
+    "Оберіть, який пресет використовується для посилань з певного сайту",
+  "set.useGlobalDefault": "Загальний",
+
+  "tip.presetBar":
+    "Пресет для нових вставлених посилань (налаштування за сервісами мають пріоритет)",
+  "tip.editPreset": "Редагувати вибраний пресет",
+  "tip.newPreset": "Створити новий пресет",
+  "tip.downloadAll": "Почати завантаження всіх підготовлених елементів",
+  "tip.downloadNext": "Почати лише наступний підготовлений елемент",
+  "tip.downloadOne": "Завантажити цей елемент",
+  "tip.removeDraft": "Прибрати зі списку (без завантаження)",
+  "tip.draftPreset": "Пресет для цього елемента",
+  "tip.rollback": "Повернутися до попередньо встановленої версії",
+  "tip.otherVersion": "Встановити конкретний старіший реліз",
+
+  "tpl.info": "Довідка шаблону",
+  "tpl.intro":
+    "Ім'я файлу складається з полів yt-dlp. Натисніть приклад, щоб застосувати його. Поля через кому підставляють наступне, якщо перше відсутнє.",
+  "tpl.fields": "Основні поля",
+  "tpl.f.title": "назва треку / відео",
+  "tpl.f.artist": "виконавець (музичні платформи)",
+  "tpl.f.uploader": "назва каналу / акаунта",
+  "tpl.f.artistFallback": "виконавець, або автор якщо виконавця немає",
+  "tpl.f.album": "назва альбому",
+  "tpl.f.id": "унікальний id відео",
+  "tpl.f.ext": "розширення файлу (обов'язкове в кінці)",
+  "tpl.f.index": "позиція у плейлисті",
+  "tpl.f.date": "дата публікації (YYYYMMDD)",
+  "tpl.examples": "Приклади",
+  "tpl.e.artistTitle": "Виконавець - Назва (за замовчуванням)",
+  "tpl.e.titleId": "Назва [id] — уникає збігів імен",
+  "tpl.e.numbered": "Нумеровані треки плейлиста",
+  "tpl.e.dated": "Дата + назва",
+  "tpl.use": "Застосувати",
+
   "t.downloadComplete": "Завантаження завершено",
   "t.downloadFailed": "Помилка завантаження",
 };
@@ -747,6 +823,43 @@ const ru: Record<MsgKey, string> = {
   "set.presetsHint": "Многоразовые настройки загрузки для вставленных ссылок",
   "set.newPreset": "Новый пресет",
   "set.defaultPreset": "Пресет по умолчанию",
+
+  "set.servicePresets": "По сервисам",
+  "set.servicePresetsHint":
+    "Выберите, какой пресет используется для ссылок с определённого сайта",
+  "set.useGlobalDefault": "Общий",
+
+  "tip.presetBar":
+    "Пресет для новых вставленных ссылок (настройки по сервисам имеют приоритет)",
+  "tip.editPreset": "Редактировать выбранный пресет",
+  "tip.newPreset": "Создать новый пресет",
+  "tip.downloadAll": "Начать загрузку всех подготовленных элементов",
+  "tip.downloadNext": "Начать только следующий подготовленный элемент",
+  "tip.downloadOne": "Скачать этот элемент",
+  "tip.removeDraft": "Убрать из списка (без загрузки)",
+  "tip.draftPreset": "Пресет для этого элемента",
+  "tip.rollback": "Вернуться к ранее установленной версии",
+  "tip.otherVersion": "Установить конкретный старый релиз",
+
+  "tpl.info": "Справка по шаблону",
+  "tpl.intro":
+    "Имя файла собирается из полей yt-dlp. Нажмите пример, чтобы применить его. Поля через запятую подставляют следующее, если первое отсутствует.",
+  "tpl.fields": "Основные поля",
+  "tpl.f.title": "название трека / видео",
+  "tpl.f.artist": "исполнитель (музыкальные платформы)",
+  "tpl.f.uploader": "название канала / аккаунта",
+  "tpl.f.artistFallback": "исполнитель, или автор если исполнителя нет",
+  "tpl.f.album": "название альбома",
+  "tpl.f.id": "уникальный id видео",
+  "tpl.f.ext": "расширение файла (обязательно в конце)",
+  "tpl.f.index": "позиция в плейлисте",
+  "tpl.f.date": "дата публикации (YYYYMMDD)",
+  "tpl.examples": "Примеры",
+  "tpl.e.artistTitle": "Исполнитель - Название (по умолчанию)",
+  "tpl.e.titleId": "Название [id] — избегает совпадений имён",
+  "tpl.e.numbered": "Нумерованные треки плейлиста",
+  "tpl.e.dated": "Дата + название",
+  "tpl.use": "Применить",
 
   "t.downloadComplete": "Загрузка завершена",
   "t.downloadFailed": "Ошибка загрузки",

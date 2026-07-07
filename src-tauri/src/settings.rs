@@ -67,6 +67,8 @@ pub struct Settings {
     // Named per-download presets and the one selected as default.
     pub presets: Vec<Preset>,
     pub default_preset_id: String,
+    // Per-service default preset overrides: service key -> preset id.
+    pub service_presets: std::collections::HashMap<String, String>,
     // The user confirmed the legal disclaimer on first launch.
     pub disclaimer_accepted: bool,
     pub language: String, // "en" | "uk" | "ru"
@@ -89,12 +91,13 @@ impl Default for Settings {
             write_subs: false,
             embed_subs: true,
             sub_langs: "en".into(),
-            output_template: "%(title)s [%(id)s].%(ext)s".into(),
+            output_template: "%(artist,uploader)s - %(title)s.%(ext)s".into(),
             notifications: true,
             concurrent_fragments: 4,
             theme: "dark".into(),
             presets: default_presets(),
             default_preset_id: "video-best".into(),
+            service_presets: std::collections::HashMap::new(),
             disclaimer_accepted: false,
             language: "en".into(),
         }
@@ -124,6 +127,10 @@ pub fn load(app: &AppHandle) -> Settings {
     // Settings files written before presets existed load with an empty list.
     if settings.presets.is_empty() {
         settings.presets = default_presets();
+    }
+    // Migrate the pre-0.1.4 default filename template to the new default.
+    if settings.output_template.trim() == "%(title)s [%(id)s].%(ext)s" {
+        settings.output_template = "%(artist,uploader)s - %(title)s.%(ext)s".into();
     }
     if !settings.presets.iter().any(|p| p.id == settings.default_preset_id) {
         settings.default_preset_id = settings.presets[0].id.clone();

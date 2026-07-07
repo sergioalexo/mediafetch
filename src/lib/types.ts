@@ -102,6 +102,8 @@ export interface Settings {
   theme: "dark" | "light";
   presets: Preset[];
   defaultPresetId: string;
+  /** Per-service default preset overrides: service key -> preset id. */
+  servicePresets: Record<string, string>;
   /** The user confirmed the legal disclaimer on first launch. */
   disclaimerAccepted: boolean;
   language: "en" | "uk" | "ru";

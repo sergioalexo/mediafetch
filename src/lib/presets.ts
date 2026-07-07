@@ -97,6 +97,53 @@ export function optionsFromPreset(
   };
 }
 
+// ---- Service detection (per-service default presets) ----
+
+export interface ServiceDef {
+  key: string;
+  label: string;
+  hosts: string[]; // hostname suffixes; more specific services must come first
+}
+
+/** Order matters: music.youtube.com must match before youtube.com. */
+export const SERVICES: ServiceDef[] = [
+  { key: "youtube-music", label: "YouTube Music", hosts: ["music.youtube.com"] },
+  { key: "youtube", label: "YouTube", hosts: ["youtube.com", "youtu.be"] },
+  { key: "soundcloud", label: "SoundCloud", hosts: ["soundcloud.com"] },
+  { key: "instagram", label: "Instagram", hosts: ["instagram.com"] },
+  { key: "tiktok", label: "TikTok", hosts: ["tiktok.com"] },
+  { key: "x", label: "X (Twitter)", hosts: ["twitter.com", "x.com"] },
+  { key: "vimeo", label: "Vimeo", hosts: ["vimeo.com"] },
+  { key: "twitch", label: "Twitch", hosts: ["twitch.tv"] },
+  { key: "facebook", label: "Facebook", hosts: ["facebook.com", "fb.watch"] },
+];
+
+/** Which known service a URL belongs to, or null. */
+export function detectService(url: string): ServiceDef | null {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+  for (const svc of SERVICES) {
+    if (svc.hosts.some((h) => host === h || host.endsWith(`.${h}`))) return svc;
+  }
+  return null;
+}
+
+/** Preset id to use for a URL: the service mapping, else the global default. */
+export function presetIdForUrl(
+  url: string,
+  servicePresets: Record<string, string>,
+  defaultPresetId: string,
+  presetExists: (id: string) => boolean
+): string {
+  const svc = detectService(url);
+  const mapped = svc ? servicePresets[svc.key] : undefined;
+  return mapped && presetExists(mapped) ? mapped : defaultPresetId;
+}
+
 /** Best source audio bitrate (kbps) from an analysis, for CBR matching. */
 export function sourceAbrOf(result: AnalyzeResult | null | undefined): number | null {
   if (!result || result.kind !== "video") return null;

@@ -70,6 +70,11 @@ pub fn kill_tree(pid: u32) {
 
 #[cfg(not(windows))]
 pub fn kill_tree(pid: u32) {
+    // Kill spawned children (ffmpeg post-processors) first, then the
+    // process itself — plain `kill` would orphan them on macOS/Linux.
+    let _ = std::process::Command::new("pkill")
+        .args(["-9", "-P", &pid.to_string()])
+        .output();
     let _ = std::process::Command::new("kill")
         .args(["-9", &pid.to_string()])
         .output();

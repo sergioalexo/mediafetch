@@ -39,9 +39,16 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
   const refresh = useApp((s) => s.refreshBinaries);
   const t = useT();
   const [versions, setVersions] = useState<string[] | null>(null);
-  const busy = progress && (progress.phase === "downloading" || progress.phase === "extracting");
+  const [installing, setInstalling] = useState(false);
+  // `installing` covers the click-to-first-progress-event gap (and outright
+  // failures), so the button can't be double-clicked into concurrent installs.
+  const busy =
+    installing ||
+    (progress && (progress.phase === "downloading" || progress.phase === "extracting"));
 
   const install = async (version?: string) => {
+    if (installing) return;
+    setInstalling(true);
     try {
       if (version) {
         toast({
@@ -56,6 +63,8 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
         description: String(e),
         variant: "error",
       });
+    } finally {
+      setInstalling(false);
     }
   };
 
@@ -148,7 +157,13 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
               </Button>
             )}
             {bin.previousVersion && bin.previousVersion !== bin.currentVersion && (
-              <Button size="sm" variant="outline" onClick={rollback} disabled={!!busy}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={rollback}
+                disabled={!!busy}
+                title={t("tip.rollback")}
+              >
                 <Undo2 className="h-3.5 w-3.5" /> {t("c.rollback")}
               </Button>
             )}
@@ -161,7 +176,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
               }}
               disabled={!!busy}
             >
-              <SelectTrigger className="h-8 w-44 text-xs">
+              <SelectTrigger className="h-8 w-44 text-xs" title={t("tip.otherVersion")}>
                 <SelectValue placeholder={t("c.otherVersion")} />
               </SelectTrigger>
               <SelectContent>

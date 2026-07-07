@@ -74,7 +74,11 @@ export function PresetDialog({
     const presets = settings.presets.filter((p) => p.id !== preset.id);
     const defaultPresetId =
       settings.defaultPresetId === preset.id ? presets[0].id : settings.defaultPresetId;
-    void updateSettings({ presets, defaultPresetId });
+    // Drop service mappings that pointed at the removed preset.
+    const servicePresets = Object.fromEntries(
+      Object.entries(settings.servicePresets ?? {}).filter(([, v]) => v !== preset.id)
+    );
+    void updateSettings({ presets, defaultPresetId, servicePresets });
     onOpenChange(false);
   };
 

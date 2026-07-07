@@ -32,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { QueueItem } from "@/components/QueueItem";
 import { PresetDialog } from "@/components/PresetDialog";
 import * as api from "@/lib/api";
@@ -115,7 +116,7 @@ export function WorkspacePage() {
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">{t("ws.preset")}</span>
         <Select value={activePresetId} onValueChange={(v) => void setDefaultPreset(v)}>
-          <SelectTrigger className="h-9 w-56">
+          <SelectTrigger className="h-9 w-56" title={t("tip.presetBar")}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -141,7 +142,7 @@ export function WorkspacePage() {
             setEditPreset(presets.find((p) => p.id === activePresetId) ?? null);
             setDialogOpen(true);
           }}
-          title={t("ws.managePresets")}
+          title={t("tip.editPreset")}
         >
           <Pencil className="h-3.5 w-3.5" />
         </Button>
@@ -152,7 +153,7 @@ export function WorkspacePage() {
             setEditPreset(null);
             setDialogOpen(true);
           }}
-          title={t("set.newPreset")}
+          title={t("tip.newPreset")}
         >
           <Plus className="h-3.5 w-3.5" />
         </Button>
@@ -200,12 +201,22 @@ export function WorkspacePage() {
       {/* Action bar */}
       {readyCount > 0 && (
         <div className="flex items-center gap-2">
-          <Button onClick={() => void downloadAll()}>
-            <Download className="h-4 w-4" /> {t("ws.downloadAll", { n: readyCount })}
-          </Button>
-          <Button variant="outline" onClick={() => void downloadNext()}>
-            <Play className="h-4 w-4" /> {t("ws.downloadNext")}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={() => void downloadAll()}>
+                <Download className="h-4 w-4" /> {t("ws.downloadAll", { n: readyCount })}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("tip.downloadAll")}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => void downloadNext()}>
+                <Play className="h-4 w-4" /> {t("ws.downloadNext")}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("tip.downloadNext")}</TooltipContent>
+          </Tooltip>
         </div>
       )}
 
@@ -278,7 +289,7 @@ function DraftCard({ draft }: { draft: Draft }) {
 
   const presetPicker = (
     <Select value={draft.presetId} onValueChange={(v) => setDraftPreset(draft.id, v)}>
-      <SelectTrigger className="h-7 w-40 text-xs">
+      <SelectTrigger className="h-7 w-40 text-xs" title={t("tip.draftPreset")}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -354,10 +365,15 @@ function DraftCard({ draft }: { draft: Draft }) {
               )}
             </div>
           </div>
-          <Button size="sm" onClick={() => void downloadDraft(draft.id)}>
+          <Button size="sm" onClick={() => void downloadDraft(draft.id)} title={t("tip.downloadOne")}>
             <Download className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="iconSm" onClick={() => removeDraft(draft.id)}>
+          <Button
+            variant="ghost"
+            size="iconSm"
+            onClick={() => removeDraft(draft.id)}
+            title={t("tip.removeDraft")}
+          >
             <X className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -392,10 +408,16 @@ function DraftCard({ draft }: { draft: Draft }) {
               size="sm"
               onClick={() => void downloadDraft(draft.id)}
               disabled={draft.selected.length === 0}
+              title={t("tip.downloadOne")}
             >
               <Download className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="iconSm" onClick={() => removeDraft(draft.id)}>
+            <Button
+              variant="ghost"
+              size="iconSm"
+              onClick={() => removeDraft(draft.id)}
+              title={t("tip.removeDraft")}
+            >
               <X className="h-3.5 w-3.5" />
             </Button>
           </div>

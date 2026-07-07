@@ -6,6 +6,7 @@ import {
   FolderOpen,
   Gauge,
   Globe,
+  Info,
   Layers,
   Pencil,
   Plus,
@@ -16,8 +17,15 @@ import {
 import type { Preset, Settings } from "@/lib/types";
 import { useApp } from "@/lib/store";
 import { LANGUAGES, useT, type MsgKey } from "@/lib/i18n";
-import { presetSummary } from "@/lib/presets";
+import { presetSummary, SERVICES } from "@/lib/presets";
 import { PresetDialog } from "@/components/PresetDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import * as api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,6 +79,7 @@ export function SettingsPage() {
   const t = useT();
   const [editPreset, setEditPreset] = useState<Preset | null>(null);
   const [presetDialog, setPresetDialog] = useState(false);
+  const [tplGuide, setTplGuide] = useState(false);
 
   if (!settings) return null;
   const set = (patch: Partial<Settings>) => void updateSettings(patch);
@@ -140,11 +149,21 @@ export function SettingsPage() {
             />
           </Row>
           <Row label={t("set.template")} hint={t("set.templateHint")}>
-            <Input
-              className="w-64 font-mono text-xs"
-              value={settings.outputTemplate}
-              onChange={(e) => set({ outputTemplate: e.target.value })}
-            />
+            <div className="flex items-center gap-1.5">
+              <Input
+                className="w-64 font-mono text-xs"
+                value={settings.outputTemplate}
+                onChange={(e) => set({ outputTemplate: e.target.value })}
+              />
+              <Button
+                variant="ghost"
+                size="iconSm"
+                onClick={() => setTplGuide(true)}
+                title={t("tpl.info")}
+              >
+                <Info className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </Row>
           <Row label={t("set.notifications")} hint={t("set.notificationsHint")}>
             <Switch
@@ -217,6 +236,42 @@ export function SettingsPage() {
               </div>
             </div>
           ))}
+
+          {/* Per-service defaults */}
+          <div className="pt-3">
+            <div className="text-sm font-medium">{t("set.servicePresets")}</div>
+            <div className="text-xs text-muted-foreground">{t("set.servicePresetsHint")}</div>
+            <div className="mt-2 grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+              {SERVICES.map((svc) => (
+                <div key={svc.key} className="flex items-center justify-between gap-2 py-1">
+                  <span className="text-sm">{svc.label}</span>
+                  <Select
+                    value={settings.servicePresets?.[svc.key] ?? "default"}
+                    onValueChange={(v) => {
+                      const sp = { ...(settings.servicePresets ?? {}) };
+                      if (v === "default") delete sp[svc.key];
+                      else sp[svc.key] = v;
+                      set({ servicePresets: sp });
+                    }}
+                  >
+                    <SelectTrigger className="h-7 w-40 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default" className="text-xs">
+                        {t("set.useGlobalDefault")}
+                      </SelectItem>
+                      {settings.presets.map((p) => (
+                        <SelectItem key={p.id} value={p.id} className="text-xs">
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -434,6 +489,87 @@ export function SettingsPage() {
       </Card>
 
       <PresetDialog preset={editPreset} open={presetDialog} onOpenChange={setPresetDialog} />
+
+      {/* Filename template guide */}
+      <Dialog open={tplGuide} onOpenChange={setTplGuide}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Info className="h-4 w-4 text-primary" /> {t("tpl.info")}
+            </DialogTitle>
+            <DialogDescription>{t("tpl.intro")}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 text-sm">
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                {t("tpl.fields")}
+              </div>
+              <div className="space-y-1 rounded-md border p-2.5 text-xs">
+                {(
+                  [
+                    ["%(title)s", "tpl.f.title"],
+                    ["%(artist)s", "tpl.f.artist"],
+                    ["%(uploader)s", "tpl.f.uploader"],
+                    ["%(artist,uploader)s", "tpl.f.artistFallback"],
+                    ["%(album)s", "tpl.f.album"],
+                    ["%(id)s", "tpl.f.id"],
+                    ["%(ext)s", "tpl.f.ext"],
+                    ["%(playlist_index)s", "tpl.f.index"],
+                    ["%(upload_date)s", "tpl.f.date"],
+                  ] as [string, MsgKey][]
+                ).map(([field, desc]) => (
+                  <div key={field} className="flex items-baseline gap-3">
+                    <code className="w-44 shrink-0 select-text font-mono text-primary">
+                      {field}
+                    </code>
+                    <span className="text-muted-foreground">{t(desc)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                {t("tpl.examples")}
+              </div>
+              <div className="space-y-1.5">
+                {(
+                  [
+                    ["tpl.e.artistTitle", "%(artist,uploader)s - %(title)s.%(ext)s"],
+                    ["tpl.e.titleId", "%(title)s [%(id)s].%(ext)s"],
+                    ["tpl.e.numbered", "%(playlist_index)02d - %(title)s.%(ext)s"],
+                    ["tpl.e.dated", "%(upload_date)s %(title)s.%(ext)s"],
+                  ] as [MsgKey, string][]
+                ).map(([label, tpl]) => (
+                  <div
+                    key={tpl}
+                    className="flex items-center gap-2 rounded-md border px-2.5 py-1.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs">{t(label)}</div>
+                      <code className="select-text break-all font-mono text-[11px] text-muted-foreground">
+                        {tpl}
+                      </code>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 shrink-0 text-xs"
+                      onClick={() => {
+                        set({ outputTemplate: tpl });
+                        setTplGuide(false);
+                      }}
+                    >
+                      {t("tpl.use")}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
