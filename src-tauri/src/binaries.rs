@@ -17,6 +17,22 @@ const FFMPEG_REPO: &str = "BtbN/FFmpeg-Builds";
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+#[cfg(windows)]
+const YTDLP_ASSET: &str = "yt-dlp.exe";
+#[cfg(target_os = "macos")]
+const YTDLP_ASSET: &str = "yt-dlp_macos";
+#[cfg(all(unix, not(target_os = "macos")))]
+const YTDLP_ASSET: &str = "yt-dlp";
+
+#[cfg(windows)]
+fn exe_name(name: &str) -> String {
+    format!("{name}.exe")
+}
+#[cfg(not(windows))]
+fn exe_name(name: &str) -> String {
+    name.to_string()
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BinaryStatus {
@@ -71,9 +87,19 @@ pub fn bin_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn find_on_path(exe: &str) -> Option<PathBuf> {
-    let path_var = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(exe);
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(exe);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    // GUI apps launched from Finder don't inherit the shell PATH, so the
+    // Homebrew locations are checked explicitly.
+    #[cfg(target_os = "macos")]
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        let candidate = PathBuf::from(dir).join(exe);
         if candidate.is_file() {
             return Some(candidate);
         }
@@ -84,7 +110,7 @@ fn find_on_path(exe: &str) -> Option<PathBuf> {
 /// Resolve a tool: prefer the managed copy in our bin dir, fall back to PATH.
 /// Returns (path, managed).
 pub fn resolve(app: &AppHandle, name: &str) -> Option<(PathBuf, bool)> {
-    let exe = format!("{name}.exe");
+    let exe = exe_name(name);
     if let Ok(dir) = bin_dir(app) {
         let managed = dir.join(&exe);
         if managed.is_file() {
@@ -105,11 +131,11 @@ pub fn ffmpeg_dir(app: &AppHandle) -> Option<PathBuf> {
 }
 
 /// Files that make up a managed component (first entry is the main exe).
-fn component_files(name: &str) -> &'static [&'static str] {
+fn component_files(name: &str) -> Vec<String> {
     match name {
-        YTDLP => &["yt-dlp.exe"],
-        FFMPEG => &["ffmpeg.exe", "ffprobe.exe", "ffmpeg.tag"],
-        _ => &[],
+        YTDLP => vec![exe_name(YTDLP)],
+        FFMPEG => vec![exe_name(FFMPEG), exe_name("ffprobe"), "ffmpeg.tag".to_string()],
+        _ => Vec::new(),
     }
 }
 
@@ -125,12 +151,12 @@ fn previous_exe(app: &AppHandle, name: &str) -> Option<PathBuf> {
 fn backup_current(app: &AppHandle, name: &str) -> Result<(), String> {
     let dir = bin_dir(app)?;
     let files = component_files(name);
-    if files.is_empty() || !dir.join(files[0]).is_file() {
+    if files.is_empty() || !dir.join(&files[0]).is_file() {
         return Ok(()); // nothing installed yet
     }
     let prev = dir.join("previous");
     std::fs::create_dir_all(&prev).map_err(|e| e.to_string())?;
-    for f in files {
+    for f in &files {
         let src = dir.join(f);
         if src.is_file() {
             std::fs::copy(&src, prev.join(f)).map_err(|e| e.to_string())?;
@@ -148,10 +174,10 @@ pub fn rollback(app: &AppHandle, name: &str) -> Result<(), String> {
     if files.is_empty() {
         return Err(format!("Unknown binary: {name}"));
     }
-    if !prev.join(files[0]).is_file() {
+    if !prev.join(&files[0]).is_file() {
         return Err("No previous version available to roll back to.".into());
     }
-    for f in files {
+    for f in &files {
         let cur = dir.join(f);
         let old = prev.join(f);
         let tmp = dir.join(format!("{f}.swap"));
@@ -409,12 +435,26 @@ async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Re
             let asset = release
                 .assets
                 .iter()
-                .find(|a| a.name == "yt-dlp.exe")
-                .ok_or("yt-dlp.exe asset not found in the latest release")?;
-            let dest = dir.join("yt-dlp.exe");
+                .find(|a| a.name == YTDLP_ASSET)
+                .ok_or_else(|| format!("{YTDLP_ASSET} asset not found in this release"))?;
+            let dest = dir.join(exe_name(YTDLP));
             download_with_progress(app, name, &asset.browser_download_url, asset.size, &dest)
-                .await
+                .await?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(())
         }
+        #[cfg(not(windows))]
+        FFMPEG => Err(
+            "Automatic FFmpeg install is only available on Windows. Install it with \
+             Homebrew (`brew install ffmpeg`) — MediaFetch will detect it automatically."
+                .to_string(),
+        ),
+        #[cfg(windows)]
         FFMPEG => {
             let asset = release
                 .assets
@@ -463,6 +503,7 @@ async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Re
     }
 }
 
+#[cfg(windows)]
 fn extract_ffmpeg(zip_path: &PathBuf, dest_dir: &PathBuf) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;

@@ -154,7 +154,10 @@ fn build_args(
     };
     args.extend([
         "-o".into(),
-        format!("{}\\{}", settings.download_dir.trim_end_matches('\\'), template),
+        std::path::Path::new(&settings.download_dir)
+            .join(template)
+            .to_string_lossy()
+            .into_owned(),
     ]);
 
     if let Some(ffdir) = binaries::ffmpeg_dir(app) {

@@ -60,7 +60,7 @@ npm run tauri dev     # run the app in dev mode
 npm run tauri build   # produce the installer (NSIS)
 ```
 
-On first launch, open the **Components** page and install yt-dlp and FFmpeg (or make sure both are on your PATH). Binaries are stored in `%APPDATA%/com.mediafetch.app/bin`.
+On first launch, open the **Components** page and install yt-dlp and FFmpeg (or make sure both are on your PATH). On Windows binaries are stored in `%APPDATA%/com.mediafetch.app/bin`. On macOS, yt-dlp installs from the Components page too, while FFmpeg comes from Homebrew (`brew install ffmpeg`) and is picked up automatically.
 
 ## Releases
 
@@ -68,7 +68,7 @@ Versions are driven by git tags. To publish a release:
 
 1. Bump `version` in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json` (keep them in sync).
 2. Commit, then tag and push: `git tag v0.2.0 && git push --tags`.
-3. The **Release** GitHub Actions workflow builds the NSIS installer and publishes it at [Releases](https://github.com/sergioalexo/mediafetch/releases).
+3. The **Release** GitHub Actions workflow builds the Windows NSIS installer and the macOS universal DMG and publishes both at [Releases](https://github.com/sergioalexo/mediafetch/releases). The macOS build is unsigned — first launch requires right-click → Open.
 
 The app checks the latest GitHub release on startup and shows an update notice on the Components page, where it can download and install the update in place (updater artifacts are signed in CI with the `TAURI_SIGNING_PRIVATE_KEY` repository secret; the private key lives in `~/.tauri/mediafetch.key` — **keep a backup, without it updates can't be signed**).
 

@@ -1,7 +1,7 @@
 name: Release
 
-# Build the Windows installer and publish it as a GitHub release
-# whenever a version tag (v0.2.0, v1.0.0, ...) is pushed.
+# Build the Windows installer and macOS bundle and publish them as a
+# GitHub release whenever a version tag (v0.2.0, v1.0.0, ...) is pushed.
 on:
   push:
     tags:
@@ -12,7 +12,16 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            # Universal binary: runs natively on Apple Silicon and Intel.
+            args: "--target universal-apple-darwin"
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +31,8 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -41,3 +52,4 @@ jobs:
           releaseBody: "See the assets below to download and install this version."
           releaseDraft: false
           prerelease: false
+          args: ${{ matrix.args }}
