@@ -1,4 +1,4 @@
-import { useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AudioLines,
@@ -17,6 +17,7 @@ import {
 import type {
   AnalyzeResult,
   AudioFormat,
+  BitrateMode,
   DownloadKind,
   DownloadOptions,
   VideoFormat,
@@ -57,6 +58,16 @@ const PRESETS = [
   { value: "720", label: "720p", f: "bv*[height<=720]+ba/b" },
   { value: "480", label: "480p", f: "bv*[height<=480]+ba/b" },
 ];
+
+/** True when a completed history entry matches this URL / media id. */
+function isAlreadyDownloaded(url: string, id?: string | null): boolean {
+  const hist = useApp.getState().history;
+  return hist.some(
+    (h) =>
+      h.status === "completed" &&
+      (h.url === url || (!!id && id.length >= 6 && h.url.includes(id)))
+  );
+}
 
 interface QualityChoice {
   key: string;
@@ -106,6 +117,8 @@ export function DownloadsPage() {
   const toast = useApp((s) => s.toast);
   const settings = useApp((s) => s.settings);
   const setPage = useApp((s) => s.setPage);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const history = useApp((s) => s.history);
 
   const [input, setInput] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -113,22 +126,80 @@ export function DownloadsPage() {
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
-  // --- selection state ---
-  const [kind, setKind] = useState<DownloadKind>("video");
+  // --- selection state (restored from settings, persisted on change) ---
+  const [kind, setKindState] = useState<DownloadKind>(settings?.lastKind ?? "video");
   const [formatId, setFormatId] = useState<string>("");
-  const [preset, setPreset] = useState("best");
-  const [audioFormat, setAudioFormat] = useState<AudioFormat>("mp3");
+  const [preset, setPresetState] = useState(settings?.lastPreset || "best");
+  const [audioFormat, setAudioFormatState] = useState<AudioFormat>(
+    settings?.lastAudioFormat ?? "mp3"
+  );
+  const [bitrateMode, setBitrateModeState] = useState<BitrateMode>(
+    settings?.audioBitrateMode ?? "cbr"
+  );
   const [audioLang, setAudioLang] = useState<string>("default");
   const [subLangs, setSubLangs] = useState<string[]>([]);
   const [showMeta, setShowMeta] = useState(false);
   const [meta, setMeta] = useState({ title: "", artist: "", album: "", genre: "" });
   const [selectedEntries, setSelectedEntries] = useState<Set<number>>(new Set());
 
+  // Settings may still be loading on the very first mount — apply them once.
+  const restoredFromSettings = useRef(!!settings);
+  useEffect(() => {
+    if (!settings || restoredFromSettings.current) return;
+    restoredFromSettings.current = true;
+    setKindState(settings.lastKind ?? "video");
+    setPresetState(settings.lastPreset || "best");
+    setAudioFormatState(settings.lastAudioFormat ?? "mp3");
+    setBitrateModeState(settings.audioBitrateMode ?? "cbr");
+  }, [settings]);
+
+  const setKind = (k: DownloadKind) => {
+    setKindState(k);
+    void updateSettings({ lastKind: k });
+  };
+  const setPreset = (p: string) => {
+    setPresetState(p);
+    void updateSettings({ lastPreset: p });
+  };
+  const setAudioFormat = (f: AudioFormat) => {
+    setAudioFormatState(f);
+    void updateSettings({ lastAudioFormat: f });
+  };
+  const setBitrateMode = (m: BitrateMode) => {
+    setBitrateModeState(m);
+    void updateSettings({ audioBitrateMode: m });
+  };
+
   const urls = useMemo(() => extractUrls(input), [input]);
 
   const qualityChoices = useMemo(
     () => (result && result.kind === "video" ? buildQualityChoices(result.formats) : []),
     [result]
+  );
+
+  // Best source audio bitrate (kbps) — used to match CBR encode quality.
+  const sourceAbr = useMemo(() => {
+    if (!result || result.kind !== "video") return null;
+    const abrs = result.formats
+      .filter((f) => f.acodec && f.acodec !== "none")
+      .map((f) => f.abr ?? 0);
+    const max = Math.max(0, ...abrs);
+    return max > 0 ? max : null;
+  }, [result]);
+
+  // Which playlist entries are already in the download history.
+  const entryDownloaded = useMemo(
+    () =>
+      result?.kind === "playlist"
+        ? result.entries.map((e) => isAlreadyDownloaded(e.url, e.id))
+        : [],
+    [result, history]
+  );
+
+  const videoDownloaded = useMemo(
+    () =>
+      result?.kind === "video" ? isAlreadyDownloaded(result.url, result.id) : false,
+    [result, history]
   );
 
   const reset = () => {
@@ -159,7 +230,15 @@ export function DownloadsPage() {
       const r = await api.analyzeUrl(urls[0]);
       setResult(r);
       if (r.kind === "playlist") {
-        setSelectedEntries(new Set(r.entries.map((_, i) => i)));
+        // Pre-select everything except tracks already in the history —
+        // the user can still tick those back on to re-download.
+        setSelectedEntries(
+          new Set(
+            r.entries
+              .map((_, i) => i)
+              .filter((i) => !isAlreadyDownloaded(r.entries[i].url, r.entries[i].id))
+          )
+        );
       } else {
         const choices = buildQualityChoices(r.formats);
         if (choices.length) setFormatId(choices[0].formatId);
@@ -206,6 +285,8 @@ export function DownloadsPage() {
       format: kind === "video" ? format : "ba/b",
       formatNote: note,
       audioFormat: kind === "audio" ? audioFormat : null,
+      bitrateMode: kind === "audio" ? bitrateMode : null,
+      sourceAbr: kind === "audio" ? sourceAbr : null,
       playlist: false,
       subtitleLangs: subLangs.length ? subLangs.join(",") : null,
       audioLang: audioLang !== "default" ? audioLang : null,
@@ -223,28 +304,29 @@ export function DownloadsPage() {
   const enqueuePlaylist = async () => {
     if (!result) return;
     const p = PRESETS.find((p) => p.value === preset) ?? PRESETS[0];
-    const items =
-      selectedEntries.size === result.entries.length
-        ? null
-        : [...selectedEntries]
-            .sort((a, b) => a - b)
-            .map((i) => i + 1)
-            .join(",");
-    const opts: DownloadOptions = {
-      url: result.url,
-      kind,
-      format: kind === "video" ? p.f : "ba/b",
-      formatNote: kind === "video" ? p.label : audioFormat.toUpperCase(),
-      audioFormat: kind === "audio" ? audioFormat : null,
-      playlist: true,
-      playlistItems: items,
-      metadata: null,
-      title: result.title,
-    };
-    await api.enqueue([opts]);
+    // Each selected track becomes its own task, so every track gets its own
+    // queue row and history entry.
+    const items: DownloadOptions[] = [...selectedEntries]
+      .sort((a, b) => a - b)
+      .map((i) => result.entries[i])
+      .filter((e) => !!e.url)
+      .map((e) => ({
+        url: e.url,
+        kind,
+        format: kind === "video" ? p.f : "ba/b",
+        formatNote: kind === "video" ? p.label : audioFormat.toUpperCase(),
+        audioFormat: kind === "audio" ? audioFormat : null,
+        bitrateMode: kind === "audio" ? bitrateMode : null,
+        playlist: false,
+        metadata: null,
+        title: e.title,
+        thumbnail: e.thumbnail,
+      }));
+    if (items.length === 0) return;
+    await api.enqueue(items);
     toast({
       title: "Playlist added to queue",
-      description: `${selectedEntries.size} item(s) · ${result.title}`,
+      description: `${items.length} track(s) · ${result.title}`,
       variant: "success",
     });
     setInput("");
@@ -260,6 +342,7 @@ export function DownloadsPage() {
       format: kind === "video" ? p.f : "ba/b",
       formatNote: kind === "video" ? p.label : audioFormat.toUpperCase(),
       audioFormat: kind === "audio" ? audioFormat : null,
+      bitrateMode: kind === "audio" ? bitrateMode : null,
       playlist: false,
       metadata: null,
     }));
@@ -390,7 +473,12 @@ export function DownloadsPage() {
             {kind === "video" ? (
               <PresetSelect preset={preset} setPreset={setPreset} />
             ) : (
-              <AudioFormatSelect value={audioFormat} onChange={setAudioFormat} />
+              <AudioOptions
+                format={audioFormat}
+                onFormatChange={setAudioFormat}
+                bitrateMode={bitrateMode}
+                onBitrateModeChange={setBitrateMode}
+              />
             )}
             <Button className="w-full" onClick={enqueueMany}>
               <Download className="h-4 w-4" /> Add {urls.length} downloads to queue
@@ -427,6 +515,14 @@ export function DownloadsPage() {
                     {qualityChoices.some((q) => q.hdr) && (
                       <Badge variant="hdr" className="mt-1.5">
                         HDR available
+                      </Badge>
+                    )}
+                    {videoDownloaded && (
+                      <Badge
+                        variant="secondary"
+                        className="ml-1.5 mt-1.5 border-amber-500/40 bg-amber-500/15 text-amber-500"
+                      >
+                        Already downloaded
                       </Badge>
                     )}
                   </div>
@@ -483,7 +579,12 @@ export function DownloadsPage() {
                     </div>
                   </div>
                 ) : (
-                  <AudioFormatSelect value={audioFormat} onChange={setAudioFormat} />
+                  <AudioOptions
+                format={audioFormat}
+                onFormatChange={setAudioFormat}
+                bitrateMode={bitrateMode}
+                onBitrateModeChange={setBitrateMode}
+              />
                 )}
 
                 {/* Subtitles */}
@@ -599,7 +700,12 @@ export function DownloadsPage() {
                 {kind === "video" ? (
                   <PresetSelect preset={preset} setPreset={setPreset} />
                 ) : (
-                  <AudioFormatSelect value={audioFormat} onChange={setAudioFormat} />
+                  <AudioOptions
+                format={audioFormat}
+                onFormatChange={setAudioFormat}
+                bitrateMode={bitrateMode}
+                onBitrateModeChange={setBitrateMode}
+              />
                 )}
 
                 <div className="space-y-1.5">
@@ -645,6 +751,11 @@ export function DownloadsPage() {
                           {i + 1}.
                         </span>
                         <span className="min-w-0 flex-1 truncate">{entry.title}</span>
+                        {entryDownloaded[i] && (
+                          <span className="shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-1 text-[10px] font-medium text-amber-500">
+                            downloaded
+                          </span>
+                        )}
                         {entry.duration ? (
                           <span className="shrink-0 font-mono text-muted-foreground">
                             {formatDuration(entry.duration)}
@@ -715,6 +826,51 @@ function PresetSelect({
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+function AudioOptions({
+  format,
+  onFormatChange,
+  bitrateMode,
+  onBitrateModeChange,
+}: {
+  format: AudioFormat;
+  onFormatChange: (v: AudioFormat) => void;
+  bitrateMode: BitrateMode;
+  onBitrateModeChange: (v: BitrateMode) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <AudioFormatSelect value={format} onChange={onFormatChange} />
+      {format === "mp3" && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">Bitrate mode</Label>
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                ["cbr", "CBR", "constant · joint stereo · matches source quality"],
+                ["vbr", "VBR", "variable · V0 best quality"],
+              ] as const
+            ).map(([value, label, hint]) => (
+              <button
+                key={value}
+                onClick={() => onBitrateModeChange(value)}
+                className={cn(
+                  "flex flex-col items-center rounded-lg border px-2 py-2 text-xs transition-colors",
+                  bitrateMode === value
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "text-muted-foreground hover:bg-accent"
+                )}
+              >
+                <span className="font-semibold">{label}</span>
+                <span className="text-[10px] opacity-70">{hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

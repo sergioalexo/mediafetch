@@ -10,8 +10,11 @@ import {
   Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import * as api from "@/lib/api";
 import { useApp, type Page } from "@/lib/store";
 import { Badge } from "@/components/ui/badge";
+import logoBlack from "@/assets/logo-sergioalexo-black.svg";
+import logoWhite from "@/assets/logo-sergioalexo-white.svg";
 
 const NAV: { page: Page; label: string; icon: typeof Download }[] = [
   { page: "downloads", label: "Download", icon: Download },
@@ -30,10 +33,14 @@ export function Sidebar() {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
 
+  const appUpdate = useApp((s) => s.appUpdate);
+
   const activeCount = queue.filter(
     (t) => t.status === "downloading" || t.status === "queued" || t.status === "postprocessing"
   ).length;
-  const updatesAvailable = binaries.filter((b) => b.updateAvailable || !b.installed).length;
+  const updatesAvailable =
+    binaries.filter((b) => b.updateAvailable || !b.installed).length +
+    (appUpdate?.updateAvailable ? 1 : 0);
 
   return (
     <aside className="flex h-full w-56 shrink-0 flex-col border-r bg-card/50">
@@ -41,9 +48,31 @@ export function Sidebar() {
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary shadow-lg shadow-primary/25">
           <Download className="h-5 w-5 text-primary-foreground" />
         </div>
-        <div>
-          <div className="text-sm font-bold leading-tight">MediaFetch</div>
-          <div className="text-[10px] text-muted-foreground">yt-dlp · ffmpeg</div>
+        <div className="min-w-0">
+          <button
+            onClick={() => void api.openExternal("https://sergioalexo.com")}
+            title="sergioalexo.com"
+            className="block opacity-100 transition-opacity hover:opacity-70"
+          >
+            <img
+              src={logoBlack}
+              alt="SERGIO ALEXO"
+              draggable={false}
+              className="mb-1 h-2.5 w-auto select-none dark:hidden"
+            />
+            <img
+              src={logoWhite}
+              alt="SERGIO ALEXO"
+              draggable={false}
+              className="mb-1 hidden h-2.5 w-auto select-none dark:block"
+            />
+          </button>
+          <div className="text-sm font-bold leading-tight">
+            <span className="text-muted-foreground">/ </span>MediaFetch
+          </div>
+          <div className="text-[10px] text-muted-foreground">
+            {appUpdate ? `v${appUpdate.currentVersion} · ` : ""}yt-dlp · ffmpeg
+          </div>
         </div>
       </div>
 

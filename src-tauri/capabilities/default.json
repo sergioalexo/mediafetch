@@ -8,6 +8,8 @@
     "core:event:default",
     "dialog:default",
     "notification:default",
-    "opener:default"
+    "opener:default",
+    "process:default",
+    "updater:default"
   ]
 }

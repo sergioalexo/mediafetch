@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { Toaster } from "@/components/Toaster";
+import { DisclaimerDialog } from "@/components/DisclaimerDialog";
 import { useApp } from "@/lib/store";
 import { DownloadsPage } from "@/pages/DownloadsPage";
 import { QueuePage } from "@/pages/QueuePage";
@@ -49,6 +50,7 @@ export default function App() {
         </main>
       </div>
       <Toaster />
+      <DisclaimerDialog />
     </TooltipProvider>
   );
 }

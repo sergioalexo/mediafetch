@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { check as checkUpdater } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   ArrowUpCircle,
   CheckCircle2,
@@ -6,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   Terminal,
+  Undo2,
   XCircle,
 } from "lucide-react";
 import type { BinaryStatus } from "@/lib/types";
@@ -16,17 +20,60 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 function BinaryCard({ bin }: { bin: BinaryStatus }) {
   const progress = useApp((s) => s.binaryProgress[bin.name]);
   const toast = useApp((s) => s.toast);
+  const refresh = useApp((s) => s.refreshBinaries);
+  const [versions, setVersions] = useState<string[] | null>(null);
   const busy = progress && (progress.phase === "downloading" || progress.phase === "extracting");
 
-  const install = async () => {
+  const install = async (version?: string) => {
     try {
-      await api.installBinary(bin.name);
+      if (version) {
+        toast({ title: `Installing ${bin.name} ${version}…`, variant: "default" });
+      }
+      await api.installBinary(bin.name, version);
     } catch (e) {
       toast({ title: `Failed to update ${bin.name}`, description: String(e), variant: "error" });
+    }
+  };
+
+  const loadVersions = async () => {
+    if (versions) return;
+    try {
+      setVersions(await api.listBinaryVersions(bin.name));
+    } catch (e) {
+      toast({
+        title: `Could not list ${bin.name} versions`,
+        description: String(e),
+        variant: "error",
+      });
+    }
+  };
+
+  const rollback = async () => {
+    try {
+      await api.rollbackBinary(bin.name);
+      toast({
+        title: `${bin.name} switched to ${bin.previousVersion}`,
+        description: "Run it again to switch back.",
+        variant: "success",
+      });
+      await refresh(true);
+    } catch (e) {
+      toast({
+        title: `Failed to roll back ${bin.name}`,
+        description: String(e),
+        variant: "error",
+      });
     }
   };
 
@@ -66,9 +113,9 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
             </div>
           </div>
 
-          <div className="shrink-0">
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
             {bin.installed && !bin.updateAvailable ? null : (
-              <Button size="sm" onClick={install} disabled={!!busy}>
+              <Button size="sm" onClick={() => install()} disabled={!!busy}>
                 {busy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
@@ -77,10 +124,55 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 {bin.installed ? "Update" : "Install"}
               </Button>
             )}
+            {bin.previousVersion && bin.previousVersion !== bin.currentVersion && (
+              <Button size="sm" variant="outline" onClick={rollback} disabled={!!busy}>
+                <Undo2 className="h-3.5 w-3.5" /> Roll back
+              </Button>
+            )}
+            <Select
+              value=""
+              onValueChange={(tag) => void install(tag)}
+              onOpenChange={(open) => {
+                if (open) void loadVersions();
+              }}
+              disabled={!!busy}
+            >
+              <SelectTrigger className="h-8 w-44 text-xs">
+                <SelectValue placeholder="Install other version…" />
+              </SelectTrigger>
+              <SelectContent>
+                {versions === null && (
+                  <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Loading releases…
+                  </div>
+                )}
+                {versions?.map((v) => (
+                  <SelectItem key={v} value={v} className="font-mono text-xs">
+                    {v}
+                    {v === bin.currentVersion || v === bin.latestVersion
+                      ? v === bin.currentVersion
+                        ? "  (installed)"
+                        : "  (latest)"
+                      : ""}
+                  </SelectItem>
+                ))}
+                {versions?.length === 0 && (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    No releases found
+                  </div>
+                )}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+        <div
+          className={
+            bin.previousVersion
+              ? "mt-4 grid grid-cols-3 gap-3 text-sm"
+              : "mt-4 grid grid-cols-2 gap-3 text-sm"
+          }
+        >
           <div className="rounded-lg bg-secondary/50 px-3 py-2">
             <div className="text-xs text-muted-foreground">Installed version</div>
             <div className="font-mono font-medium">
@@ -91,6 +183,12 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
             <div className="text-xs text-muted-foreground">Latest release</div>
             <div className="font-mono font-medium">{bin.latestVersion ?? "checking…"}</div>
           </div>
+          {bin.previousVersion && (
+            <div className="rounded-lg bg-secondary/50 px-3 py-2">
+              <div className="text-xs text-muted-foreground">Rollback version</div>
+              <div className="font-mono font-medium">{bin.previousVersion}</div>
+            </div>
+          )}
         </div>
 
         {busy && (
@@ -120,10 +218,134 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
   );
 }
 
+function AppUpdateCard() {
+  const appUpdate = useApp((s) => s.appUpdate);
+  const toast = useApp((s) => s.toast);
+  const [installing, setInstalling] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<{
+    downloaded: number;
+    total: number;
+  } | null>(null);
+  if (!appUpdate) return null;
+
+  const installUpdate = async () => {
+    setInstalling(true);
+    try {
+      const update = await checkUpdater();
+      if (!update) {
+        toast({
+          title: "No update found",
+          description: "You are already on the latest version.",
+          variant: "default",
+        });
+        return;
+      }
+      let downloaded = 0;
+      let total = 0;
+      await update.downloadAndInstall((e) => {
+        if (e.event === "Started") {
+          total = e.data.contentLength ?? 0;
+          setUpdateProgress({ downloaded: 0, total });
+        } else if (e.event === "Progress") {
+          downloaded += e.data.chunkLength;
+          setUpdateProgress({ downloaded, total });
+        }
+      });
+      // On Windows the app exits while the installer runs; this is a no-op there.
+      await relaunch();
+    } catch (e) {
+      toast({
+        title: "Self-update failed",
+        description: `${String(e)} — opening the releases page instead.`,
+        variant: "error",
+      });
+      void api.openExternal(appUpdate.releasesUrl);
+    } finally {
+      setInstalling(false);
+      setUpdateProgress(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary shadow-lg shadow-primary/25">
+              <Download className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">MediaFetch</span>
+                {appUpdate.updateAvailable ? (
+                  <Badge className="gap-1">
+                    <ArrowUpCircle className="h-3 w-3" /> Update available
+                  </Badge>
+                ) : (
+                  <Badge variant="success" className="gap-1">
+                    <CheckCircle2 className="h-3 w-3" /> Up to date
+                  </Badge>
+                )}
+              </div>
+              <button
+                onClick={() => void api.openExternal(appUpdate.releasesUrl)}
+                className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+              >
+                {appUpdate.releasesUrl.replace("https://", "")}{" "}
+                <ExternalLink className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+          {appUpdate.updateAvailable && (
+            <Button size="sm" onClick={installUpdate} disabled={installing}>
+              {installing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              Install update
+            </Button>
+          )}
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-lg bg-secondary/50 px-3 py-2">
+            <div className="text-xs text-muted-foreground">Installed version</div>
+            <div className="font-mono font-medium">v{appUpdate.currentVersion}</div>
+          </div>
+          <div className="rounded-lg bg-secondary/50 px-3 py-2">
+            <div className="text-xs text-muted-foreground">Latest release</div>
+            <div className="font-mono font-medium">
+              {appUpdate.latestVersion ? `v${appUpdate.latestVersion}` : "—"}
+            </div>
+          </div>
+        </div>
+
+        {updateProgress && (
+          <div className="mt-3">
+            <Progress
+              value={
+                updateProgress.total > 0
+                  ? (updateProgress.downloaded / updateProgress.total) * 100
+                  : undefined
+              }
+            />
+            <div className="mt-1 text-xs text-muted-foreground">
+              Downloading {formatBytes(updateProgress.downloaded)}
+              {updateProgress.total > 0 ? ` / ${formatBytes(updateProgress.total)}` : ""}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function BinariesPage() {
   const binaries = useApp((s) => s.binaries);
   const loading = useApp((s) => s.binariesLoading);
   const refresh = useApp((s) => s.refreshBinaries);
+  const checkAppUpdate = useApp((s) => s.checkAppUpdate);
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
@@ -134,13 +356,22 @@ export function BinariesPage() {
             MediaFetch is powered by yt-dlp and FFmpeg. Manage their versions here.
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => refresh(true)} disabled={loading}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void refresh(true);
+            void checkAppUpdate();
+          }}
+          disabled={loading}
+        >
           <RefreshCw className={loading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
           Check for updates
         </Button>
       </div>
 
       <div className="space-y-3">
+        <AppUpdateCard />
         {binaries.map((b) => (
           <BinaryCard key={b.name} bin={b} />
         ))}

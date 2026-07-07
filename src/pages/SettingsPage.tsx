@@ -1,5 +1,13 @@
 import type { ReactNode } from "react";
-import { Cookie, FolderOpen, Gauge, Globe, Shield, SlidersHorizontal } from "lucide-react";
+import {
+  Cookie,
+  FolderOpen,
+  Gauge,
+  Globe,
+  ScrollText,
+  Shield,
+  SlidersHorizontal,
+} from "lucide-react";
 import type { Settings } from "@/lib/types";
 import { useApp } from "@/lib/store";
 import * as api from "@/lib/api";
@@ -51,6 +59,7 @@ export function SettingsPage() {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
   const toast = useApp((s) => s.toast);
+  const setShowDisclaimer = useApp((s) => s.setShowDisclaimer);
 
   if (!settings) return null;
   const set = (patch: Partial<Settings>) => void updateSettings(patch);
@@ -312,6 +321,25 @@ export function SettingsPage() {
                   });
               }}
             />
+          </Row>
+        </CardContent>
+      </Card>
+
+      {/* Legal */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <ScrollText className="h-4 w-4 text-primary" /> Legal
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="divide-y divide-border/60">
+          <Row
+            label="Disclaimer & terms of use"
+            hint="Educational use only — you are responsible for complying with platform terms and copyright law"
+          >
+            <Button variant="outline" size="sm" onClick={() => setShowDisclaimer(true)}>
+              View
+            </Button>
           </Row>
         </CardContent>
       </Card>

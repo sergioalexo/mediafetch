@@ -13,6 +13,8 @@ export type DownloadKind = "video" | "audio";
 
 export type AudioFormat = "mp3" | "flac" | "wav" | "aac" | "opus";
 
+export type BitrateMode = "cbr" | "vbr";
+
 export interface MetadataOverrides {
   title?: string;
   artist?: string;
@@ -28,6 +30,10 @@ export interface DownloadOptions {
   /** human readable label, e.g. "1080p60 · AV1 · HDR" */
   formatNote?: string | null;
   audioFormat?: AudioFormat | null;
+  /** "cbr" | "vbr" — MP3 bitrate mode. */
+  bitrateMode?: BitrateMode | null;
+  /** Source audio bitrate in kbps, known from analysis. */
+  sourceAbr?: number | null;
   playlist: boolean;
   playlistItems?: string | null;
   subtitleLangs?: string | null;
@@ -79,6 +85,13 @@ export interface Settings {
   notifications: boolean;
   concurrentFragments: number;
   theme: "dark" | "light";
+  // Last used selections on the Downloads page, restored on start.
+  lastKind: DownloadKind;
+  lastPreset: string;
+  lastAudioFormat: AudioFormat;
+  audioBitrateMode: BitrateMode;
+  /** The user confirmed the legal disclaimer on first launch. */
+  disclaimerAccepted: boolean;
 }
 
 // ---- URL analysis ----
@@ -140,6 +153,8 @@ export interface BinaryStatus {
   currentVersion?: string | null;
   latestVersion?: string | null;
   updateAvailable: boolean;
+  /** Version kept in the rollback slot (the one replaced by the last update). */
+  previousVersion?: string | null;
 }
 
 export interface BinaryProgress {
@@ -148,6 +163,15 @@ export interface BinaryProgress {
   downloaded: number;
   total: number;
   message?: string | null;
+}
+
+// ---- App updates ----
+
+export interface AppUpdateStatus {
+  currentVersion: string;
+  latestVersion?: string | null;
+  updateAvailable: boolean;
+  releasesUrl: string;
 }
 
 // ---- History ----

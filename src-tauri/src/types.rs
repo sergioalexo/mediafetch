@@ -32,6 +32,12 @@ pub struct DownloadOptions {
     pub format_note: Option<String>,
     #[serde(default)]
     pub audio_format: Option<String>,
+    /// "cbr" | "vbr" — MP3 bitrate mode.
+    #[serde(default)]
+    pub bitrate_mode: Option<String>,
+    /// Source audio bitrate in kbps, known from analysis.
+    #[serde(default)]
+    pub source_abr: Option<f64>,
     #[serde(default)]
     pub playlist: bool,
     #[serde(default)]

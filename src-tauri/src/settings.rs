@@ -23,6 +23,13 @@ pub struct Settings {
     pub notifications: bool,
     pub concurrent_fragments: u32,
     pub theme: String,
+    // Last used selections on the Downloads page, restored on start.
+    pub last_kind: String,          // "video" | "audio"
+    pub last_preset: String,        // quality preset value, e.g. "best" | "1080"
+    pub last_audio_format: String,  // "mp3" | "flac" | ...
+    pub audio_bitrate_mode: String, // "cbr" | "vbr"
+    // The user confirmed the legal disclaimer on first launch.
+    pub disclaimer_accepted: bool,
 }
 
 impl Default for Settings {
@@ -46,6 +53,11 @@ impl Default for Settings {
             notifications: true,
             concurrent_fragments: 4,
             theme: "dark".into(),
+            last_kind: "video".into(),
+            last_preset: "best".into(),
+            last_audio_format: "mp3".into(),
+            audio_bitrate_mode: "cbr".into(),
+            disclaimer_accepted: false,
         }
     }
 }

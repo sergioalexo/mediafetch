@@ -5,6 +5,7 @@ mod binaries;
 mod downloader;
 mod history;
 mod metadata;
+mod notify;
 mod settings;
 mod types;
 
@@ -276,6 +277,54 @@ fn open_external(url: String) -> Result<(), String> {
     tauri_plugin_opener::open_url(&url, None::<&str>).map_err(|e| e.to_string())
 }
 
+// ---------- App updates ----------
+
+const APP_REPO: &str = "sergioalexo/mediafetch";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateStatus {
+    current_version: String,
+    latest_version: Option<String>,
+    update_available: bool,
+    releases_url: String,
+}
+
+/// "1.2.10" > "1.2.9" — numeric per-segment comparison.
+fn version_newer(latest: &str, current: &str) -> bool {
+    let parse = |v: &str| -> Vec<u64> {
+        v.split('.')
+            .map(|p| {
+                p.chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0)
+            })
+            .collect()
+    };
+    parse(latest) > parse(current)
+}
+
+#[tauri::command]
+async fn check_app_update(app: AppHandle) -> AppUpdateStatus {
+    let current_version = app.package_info().version.to_string();
+    let latest_version = binaries::latest_release_tag(APP_REPO)
+        .await
+        .ok()
+        .map(|t| t.trim_start_matches('v').to_string());
+    let update_available = latest_version
+        .as_deref()
+        .map(|l| version_newer(l, &current_version))
+        .unwrap_or(false);
+    AppUpdateStatus {
+        current_version,
+        latest_version,
+        update_available,
+        releases_url: format!("https://github.com/{APP_REPO}/releases"),
+    }
+}
+
 // ---------- Binaries module ----------
 
 #[tauri::command]
@@ -287,8 +336,22 @@ async fn get_binaries_status(
 }
 
 #[tauri::command]
-async fn install_binary(app: AppHandle, name: String) -> Result<(), String> {
-    binaries::install(&app, &name).await
+async fn install_binary(
+    app: AppHandle,
+    name: String,
+    version: Option<String>,
+) -> Result<(), String> {
+    binaries::install(&app, &name, version.as_deref()).await
+}
+
+#[tauri::command]
+async fn list_binary_versions(name: String) -> Result<Vec<String>, String> {
+    binaries::list_versions(&name).await
+}
+
+#[tauri::command]
+fn rollback_binary(app: AppHandle, name: String) -> Result<(), String> {
+    binaries::rollback(&app, &name)
 }
 
 fn main() {
@@ -296,8 +359,11 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
+            notify::register_app_identity(&handle);
             let loaded = settings::load(&handle);
             app.manage(AppState::new(loaded));
             Ok(())
@@ -324,7 +390,10 @@ fn main() {
             open_file,
             open_external,
             get_binaries_status,
-            install_binary
+            install_binary,
+            rollback_binary,
+            list_binary_versions,
+            check_app_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running MediaFetch");

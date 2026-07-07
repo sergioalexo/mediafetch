@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AppUpdateStatus,
   BinaryProgress,
   BinaryStatus,
   DownloadTask,
@@ -39,6 +40,12 @@ interface AppState {
   binaryProgress: Record<string, BinaryProgress>;
   binariesLoading: boolean;
   refreshBinaries: (checkLatest: boolean) => Promise<void>;
+
+  appUpdate: AppUpdateStatus | null;
+  checkAppUpdate: () => Promise<void>;
+
+  showDisclaimer: boolean;
+  setShowDisclaimer: (v: boolean) => void;
 
   toasts: Toast[];
   toast: (t: Omit<Toast, "id">) => void;
@@ -86,6 +93,19 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
+  appUpdate: null,
+  checkAppUpdate: async () => {
+    try {
+      const appUpdate = await api.checkAppUpdate();
+      set({ appUpdate });
+    } catch {
+      // offline or rate limited — try again next launch
+    }
+  },
+
+  showDisclaimer: false,
+  setShowDisclaimer: (v) => set({ showDisclaimer: v }),
+
   toasts: [],
   toast: (t) => {
     const id = ++toastId;
@@ -102,6 +122,7 @@ export const useApp = create<AppState>((set, get) => ({
     const [queue, history] = await Promise.all([api.getQueue(), api.getHistory()]);
     set({ queue, history });
     void get().refreshBinaries(true);
+    void get().checkAppUpdate();
 
     await listen<DownloadTask[]>("queue-changed", (e) => {
       set({ queue: e.payload });

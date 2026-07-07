@@ -241,13 +241,17 @@ fn build_args(
     // Format selection
     if is_audio {
         args.extend(["-f".into(), opts.format.clone().unwrap_or_else(|| "ba/b".into())]);
-        args.extend([
-            "-x".into(),
-            "--audio-format".into(),
-            audio_format.to_string(),
-            "--audio-quality".into(),
-            "0".into(),
-        ]);
+        args.extend(["-x".into(), "--audio-format".into(), audio_format.to_string()]);
+        if audio_format == "mp3" && opts.bitrate_mode.as_deref().unwrap_or("cbr") == "cbr" {
+            let kbps = cbr_bitrate(opts.source_abr);
+            args.extend(["--audio-quality".into(), format!("{kbps}K")]);
+            args.extend([
+                "--postprocessor-args".into(),
+                "ExtractAudio:-joint_stereo 1".into(),
+            ]);
+        } else {
+            args.extend(["--audio-quality".into(), "0".into()]);
+        }
     } else {
         args.extend([
             "-f".into(),
@@ -290,6 +294,58 @@ fn build_args(
     Ok(args)
 }
 
+/// Pick the smallest standard MP3 CBR bitrate that covers the source
+/// audio bitrate, so the encode matches the actual source quality.
+fn cbr_bitrate(source_abr: Option<f64>) -> u32 {
+    const RATES: [u32; 8] = [64, 96, 128, 160, 192, 224, 256, 320];
+    let abr = match source_abr.filter(|a| *a > 0.0) {
+        Some(a) => a,
+        None => return 192, // unknown source: sane middle ground
+    };
+    RATES
+        .iter()
+        .copied()
+        .find(|r| f64::from(*r) >= abr)
+        .unwrap_or(320)
+}
+
+/// Quick metadata-only probe for the source audio bitrate (kbps).
+async fn probe_abr(app: &AppHandle, url: &str, settings: &Settings) -> Option<f64> {
+    let ytdlp = binaries::ytdlp_path(app).ok()?;
+    let mut cmd = tokio::process::Command::new(&ytdlp);
+    cmd.args([
+        "--print",
+        "%(abr)s|%(tbr)s",
+        "-f",
+        "ba/b",
+        "--no-playlist",
+        "--no-warnings",
+    ]);
+    if !settings.proxy.trim().is_empty() {
+        cmd.args(["--proxy", settings.proxy.trim()]);
+    }
+    if !settings.cookies_file.is_empty() {
+        cmd.args(["--cookies", &settings.cookies_file]);
+    } else if !settings.cookies_from_browser.is_empty() {
+        cmd.args(["--cookies-from-browser", &settings.cookies_from_browser]);
+    }
+    cmd.arg("--").arg(url);
+    cmd.stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(binaries::CREATE_NO_WINDOW);
+    }
+    let output = cmd.output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let line = text.lines().find(|l| !l.trim().is_empty())?;
+    let mut parts = line.trim().split('|');
+    let abr = parts.next().and_then(|f| parse_f64(f));
+    abr.or_else(|| parts.next().and_then(|f| parse_f64(f)))
+}
+
 fn parse_f64(field: &str) -> Option<f64> {
     let t = field.trim();
     if t.is_empty() || t == "NA" || t == "None" {
@@ -298,12 +354,23 @@ fn parse_f64(field: &str) -> Option<f64> {
     t.parse::<f64>().ok()
 }
 
-async fn run_download(app: AppHandle, task: DownloadTask) {
+async fn run_download(app: AppHandle, mut task: DownloadTask) {
     let settings = {
         let state = app.state::<AppState>();
         let s = state.settings.lock().unwrap();
         s.clone()
     };
+
+    // CBR needs the source bitrate to pick a matching encode rate; probe it
+    // when the task was queued without prior analysis (e.g. playlist tracks).
+    if task.options.kind == "audio"
+        && task.options.audio_format.as_deref().unwrap_or("mp3") == "mp3"
+        && task.options.bitrate_mode.as_deref().unwrap_or("cbr") == "cbr"
+        && task.options.source_abr.is_none()
+        && !task.options.playlist
+    {
+        task.options.source_abr = probe_abr(&app, &task.options.url, &settings).await;
+    }
 
     let ytdlp = match binaries::ytdlp_path(&app) {
         Ok(p) => p,
@@ -541,12 +608,10 @@ async fn finish_history(app: &AppHandle, task: &DownloadTask, settings: &Setting
     let _ = app.emit("history-added", &entry);
 
     if settings.notifications {
-        use tauri_plugin_notification::NotificationExt;
-        let _ = app
-            .notification()
-            .builder()
-            .title(if ok { "Download complete" } else { "Download failed" })
-            .body(&task.title)
-            .show();
+        crate::notify::show(
+            app,
+            if ok { "Download complete" } else { "Download failed" },
+            &task.title,
+        );
     }
 }

@@ -4,6 +4,15 @@ A modern desktop GUI for **yt-dlp** + **FFmpeg**, built with Tauri, React, TypeS
 
 ![stack](https://img.shields.io/badge/Tauri-2-blue) ![stack](https://img.shields.io/badge/React-18-61dafb) ![stack](https://img.shields.io/badge/TypeScript-5-3178c6)
 
+## Disclaimer
+
+MediaFetch is an independent GUI for the open-source tools yt-dlp and FFmpeg, provided for **educational, research and personal-archival purposes only**. It does not host, index, provide or promote any content.
+
+- Downloading content from YouTube, SoundCloud, Vimeo and most other streaming platforms **may violate their Terms of Service** unless the platform offers an explicit download feature or the rights holder permits it.
+- Only download content that **you own**, that is in the **public domain**, that is distributed under a **permissive license** (e.g. Creative Commons), or for which you have the rights holder's **explicit permission**. Downloading or redistributing copyrighted material without authorization may be illegal in your jurisdiction.
+- **You are solely responsible** for how you use this software and for complying with the terms of any service you use it with and with applicable law. The developer assumes **no liability for misuse** and does not endorse or encourage any violation of platform terms or copyright law.
+- This software is provided **"as is", without warranty of any kind**, under the [MIT License](LICENSE).
+
 ## Features
 
 **Downloads**
@@ -52,6 +61,16 @@ npm run tauri build   # produce the installer (NSIS)
 ```
 
 On first launch, open the **Components** page and install yt-dlp and FFmpeg (or make sure both are on your PATH). Binaries are stored in `%APPDATA%/com.mediafetch.app/bin`.
+
+## Releases
+
+Versions are driven by git tags. To publish a release:
+
+1. Bump `version` in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json` (keep them in sync).
+2. Commit, then tag and push: `git tag v0.2.0 && git push --tags`.
+3. The **Release** GitHub Actions workflow builds the NSIS installer and publishes it at [Releases](https://github.com/sergioalexo/mediafetch/releases).
+
+The app checks the latest GitHub release on startup and shows an update notice on the Components page, where it can download and install the update in place (updater artifacts are signed in CI with the `TAURI_SIGNING_PRIVATE_KEY` repository secret; the private key lives in `~/.tauri/mediafetch.key` — **keep a backup, without it updates can't be signed**).
 
 ## Architecture
 

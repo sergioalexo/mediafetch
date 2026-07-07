@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AnalyzeResult,
+  AppUpdateStatus,
   BinaryStatus,
   DownloadOptions,
   DownloadTask,
@@ -40,7 +41,15 @@ export const showInFolder = (path: string) => invoke<void>("show_in_folder", { p
 export const openFile = (path: string) => invoke<void>("open_file", { path });
 export const openExternal = (url: string) => invoke<void>("open_external", { url });
 
+// ---- App updates ----
+export const checkAppUpdate = () => invoke<AppUpdateStatus>("check_app_update");
+
 // ---- Binaries module ----
 export const getBinariesStatus = (checkLatest: boolean) =>
   invoke<BinaryStatus[]>("get_binaries_status", { checkLatest });
-export const installBinary = (name: string) => invoke<void>("install_binary", { name });
+export const installBinary = (name: string, version?: string) =>
+  invoke<void>("install_binary", { name, version: version ?? null });
+export const rollbackBinary = (name: string) =>
+  invoke<void>("rollback_binary", { name });
+export const listBinaryVersions = (name: string) =>
+  invoke<string[]>("list_binary_versions", { name });

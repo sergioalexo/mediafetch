@@ -29,6 +29,8 @@ pub struct BinaryStatus {
     pub current_version: Option<String>,
     pub latest_version: Option<String>,
     pub update_available: bool,
+    /// Version kept in the rollback slot (the one replaced by the last update).
+    pub previous_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +47,10 @@ pub struct BinaryProgress {
 struct GhRelease {
     tag_name: String,
     assets: Vec<GhAsset>,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +104,72 @@ pub fn ffmpeg_dir(app: &AppHandle) -> Option<PathBuf> {
     resolve(app, FFMPEG).map(|(p, _)| p.parent().map(|d| d.to_path_buf()).unwrap_or(p))
 }
 
+/// Files that make up a managed component (first entry is the main exe).
+fn component_files(name: &str) -> &'static [&'static str] {
+    match name {
+        YTDLP => &["yt-dlp.exe"],
+        FFMPEG => &["ffmpeg.exe", "ffprobe.exe", "ffmpeg.tag"],
+        _ => &[],
+    }
+}
+
+/// Path of the rollback copy of a component's main exe, if one exists.
+fn previous_exe(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    let files = component_files(name);
+    let p = bin_dir(app).ok()?.join("previous").join(files.first()?);
+    p.is_file().then_some(p)
+}
+
+/// Keep a copy of the currently installed component so the user can
+/// roll back if the new version misbehaves.
+fn backup_current(app: &AppHandle, name: &str) -> Result<(), String> {
+    let dir = bin_dir(app)?;
+    let files = component_files(name);
+    if files.is_empty() || !dir.join(files[0]).is_file() {
+        return Ok(()); // nothing installed yet
+    }
+    let prev = dir.join("previous");
+    std::fs::create_dir_all(&prev).map_err(|e| e.to_string())?;
+    for f in files {
+        let src = dir.join(f);
+        if src.is_file() {
+            std::fs::copy(&src, prev.join(f)).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Swap the installed component with the rollback copy. Running it again
+/// switches back, so the user can hop between the two versions freely.
+pub fn rollback(app: &AppHandle, name: &str) -> Result<(), String> {
+    let dir = bin_dir(app)?;
+    let prev = dir.join("previous");
+    let files = component_files(name);
+    if files.is_empty() {
+        return Err(format!("Unknown binary: {name}"));
+    }
+    if !prev.join(files[0]).is_file() {
+        return Err("No previous version available to roll back to.".into());
+    }
+    for f in files {
+        let cur = dir.join(f);
+        let old = prev.join(f);
+        let tmp = dir.join(format!("{f}.swap"));
+        let _ = std::fs::remove_file(&tmp);
+        if cur.is_file() {
+            std::fs::rename(&cur, &tmp)
+                .map_err(|e| format!("Could not replace {f} (is it in use?): {e}"))?;
+        }
+        if old.is_file() {
+            std::fs::rename(&old, &cur).map_err(|e| e.to_string())?;
+        }
+        if tmp.is_file() {
+            std::fs::rename(&tmp, &old).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
 fn run_version(path: &PathBuf, arg: &str) -> Option<String> {
     let mut cmd = std::process::Command::new(path);
     cmd.arg(arg);
@@ -123,20 +195,60 @@ fn http_client() -> Result<reqwest::Client, String> {
         .map_err(|e| e.to_string())
 }
 
-async fn latest_release(repo: &str) -> Result<GhRelease, String> {
-    let url = format!("https://api.github.com/repos/{repo}/releases/latest");
+/// Latest release tag of a GitHub repository, e.g. "v0.2.0".
+pub async fn latest_release_tag(repo: &str) -> Result<String, String> {
+    latest_release(repo).await.map(|r| r.tag_name)
+}
+
+async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, String> {
     let client = http_client()?;
     let resp = client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("GitHub API request failed: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("GitHub API returned {}", resp.status()));
     }
-    resp.json::<GhRelease>()
+    resp.json::<T>()
         .await
         .map_err(|e| format!("Bad GitHub API response: {e}"))
+}
+
+async fn latest_release(repo: &str) -> Result<GhRelease, String> {
+    fetch_json(&format!(
+        "https://api.github.com/repos/{repo}/releases/latest"
+    ))
+    .await
+}
+
+async fn release_by_tag(repo: &str, tag: &str) -> Result<GhRelease, String> {
+    fetch_json(&format!(
+        "https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    ))
+    .await
+}
+
+fn repo_for(name: &str) -> Result<&'static str, String> {
+    match name {
+        YTDLP => Ok(YTDLP_REPO),
+        FFMPEG => Ok(FFMPEG_REPO),
+        other => Err(format!("Unknown binary: {other}")),
+    }
+}
+
+/// Recent release tags of a component, newest first.
+pub async fn list_versions(name: &str) -> Result<Vec<String>, String> {
+    let repo = repo_for(name)?;
+    let releases: Vec<GhRelease> = fetch_json(&format!(
+        "https://api.github.com/repos/{repo}/releases?per_page=20"
+    ))
+    .await?;
+    Ok(releases
+        .into_iter()
+        .filter(|r| !r.draft && !r.prerelease)
+        .map(|r| r.tag_name)
+        .collect())
 }
 
 pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus> {
@@ -163,6 +275,7 @@ pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus
         },
         current_version: ytdlp_version,
         latest_version: ytdlp_latest,
+        previous_version: previous_exe(app, YTDLP).and_then(|p| run_version(&p, "--version")),
     });
 
     // ---- ffmpeg ----
@@ -197,6 +310,10 @@ pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus
         },
         current_version: ffmpeg_version,
         latest_version: ffmpeg_latest,
+        previous_version: previous_exe(app, FFMPEG).and_then(|p| {
+            run_version(&p, "-version")
+                .map(|line| line.split_whitespace().nth(2).unwrap_or("unknown").to_string())
+        }),
     });
 
     out
@@ -253,8 +370,8 @@ async fn download_with_progress(
     Ok(())
 }
 
-pub async fn install(app: &AppHandle, name: &str) -> Result<(), String> {
-    let result = install_inner(app, name).await;
+pub async fn install(app: &AppHandle, name: &str, version: Option<&str>) -> Result<(), String> {
+    let result = install_inner(app, name, version).await;
     match &result {
         Ok(()) => emit_progress(
             app,
@@ -280,11 +397,15 @@ pub async fn install(app: &AppHandle, name: &str) -> Result<(), String> {
     result
 }
 
-async fn install_inner(app: &AppHandle, name: &str) -> Result<(), String> {
+async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Result<(), String> {
     let dir = bin_dir(app)?;
+    backup_current(app, name)?;
+    let release = match version {
+        Some(tag) => release_by_tag(repo_for(name)?, tag).await?,
+        None => latest_release(repo_for(name)?).await?,
+    };
     match name {
         YTDLP => {
-            let release = latest_release(YTDLP_REPO).await?;
             let asset = release
                 .assets
                 .iter()
@@ -295,7 +416,6 @@ async fn install_inner(app: &AppHandle, name: &str) -> Result<(), String> {
                 .await
         }
         FFMPEG => {
-            let release = latest_release(FFMPEG_REPO).await?;
             let asset = release
                 .assets
                 .iter()
@@ -304,9 +424,15 @@ async fn install_inner(app: &AppHandle, name: &str) -> Result<(), String> {
                     release
                         .assets
                         .iter()
+                        .find(|a| a.name.contains("master") && a.name.ends_with("win64-gpl.zip"))
+                })
+                .or_else(|| {
+                    release
+                        .assets
+                        .iter()
                         .find(|a| a.name.ends_with("win64-gpl.zip"))
                 })
-                .ok_or("No win64-gpl FFmpeg build found in the latest release")?;
+                .ok_or("No win64-gpl FFmpeg build found in this release")?;
             let zip_path = dir.join("ffmpeg-download.zip");
             download_with_progress(app, name, &asset.browser_download_url, asset.size, &zip_path)
                 .await?;
