@@ -11,9 +11,18 @@ export type TaskStatus =
 
 export type DownloadKind = "video" | "audio";
 
-export type AudioFormat = "mp3" | "flac" | "wav" | "aac" | "opus";
+export type AudioFormat = "mp3" | "flac" | "wav" | "aac" | "opus" | "source";
 
+/** Legacy MP3 bitrate mode (superseded by AudioQuality). */
 export type BitrateMode = "cbr" | "vbr";
+
+/**
+ * Bitrate/quality for lossy encoded audio (mp3/aac/opus).
+ * - "match": nearest standard CBR that covers the source bitrate.
+ * - "320" | "256" | "192" | "128": forced constant bitrate (kbps).
+ * - "vbr": variable bitrate, best quality.
+ */
+export type AudioQuality = "match" | "320" | "256" | "192" | "128" | "vbr";
 
 export interface MetadataOverrides {
   title?: string;
@@ -30,7 +39,9 @@ export interface DownloadOptions {
   /** human readable label, e.g. "1080p60 · AV1 · HDR" */
   formatNote?: string | null;
   audioFormat?: AudioFormat | null;
-  /** "cbr" | "vbr" — MP3 bitrate mode. */
+  /** Bitrate/quality for lossy audio. */
+  audioQuality?: AudioQuality | null;
+  /** Legacy MP3 bitrate mode; kept for backward compat. */
   bitrateMode?: BitrateMode | null;
   /** Source audio bitrate in kbps, known from analysis. */
   sourceAbr?: number | null;
@@ -55,7 +66,9 @@ export interface Preset {
   /** quality preset value, e.g. "best" | "1080" */
   videoPreset: string;
   audioFormat: AudioFormat;
-  bitrateMode: BitrateMode;
+  audioQuality: AudioQuality;
+  /** Legacy field; superseded by audioQuality. */
+  bitrateMode?: BitrateMode | null;
   subtitleLangs?: string | null;
   embedSubs?: boolean | null;
 }

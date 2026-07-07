@@ -32,7 +32,10 @@ pub struct DownloadOptions {
     pub format_note: Option<String>,
     #[serde(default)]
     pub audio_format: Option<String>,
-    /// "cbr" | "vbr" — MP3 bitrate mode.
+    /// "match" | "320" | "256" | "192" | "128" | "vbr" — lossy audio bitrate/quality.
+    #[serde(default)]
+    pub audio_quality: Option<String>,
+    /// Legacy "cbr" | "vbr" MP3 bitrate mode, kept for backward compat.
     #[serde(default)]
     pub bitrate_mode: Option<String>,
     /// Source audio bitrate in kbps, known from analysis.

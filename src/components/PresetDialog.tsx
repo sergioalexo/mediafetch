@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
-import type { AudioFormat, BitrateMode, DownloadKind, Preset } from "@/lib/types";
+import type { AudioFormat, AudioQuality, DownloadKind, Preset } from "@/lib/types";
+import { presetAudioQuality } from "@/lib/presets";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,7 @@ export function PresetDialog({
   const [kind, setKind] = useState<DownloadKind>("video");
   const [videoPreset, setVideoPreset] = useState("best");
   const [audioFormat, setAudioFormat] = useState<AudioFormat>("mp3");
-  const [bitrateMode, setBitrateMode] = useState<BitrateMode>("cbr");
+  const [audioQuality, setAudioQuality] = useState<AudioQuality>("match");
   const [subLangs, setSubLangs] = useState("");
 
   useEffect(() => {
@@ -44,7 +45,7 @@ export function PresetDialog({
     setKind(preset?.kind ?? "video");
     setVideoPreset(preset?.videoPreset ?? "best");
     setAudioFormat(preset?.audioFormat ?? "mp3");
-    setBitrateMode(preset?.bitrateMode ?? "cbr");
+    setAudioQuality(preset ? presetAudioQuality(preset) : "match");
     setSubLangs(preset?.subtitleLangs ?? "");
   }, [open, preset]);
 
@@ -58,7 +59,7 @@ export function PresetDialog({
       kind,
       videoPreset,
       audioFormat,
-      bitrateMode,
+      audioQuality,
       subtitleLangs: kind === "video" && subLangs.trim() ? subLangs.trim() : null,
       embedSubs: kind === "video" && subLangs.trim() ? true : null,
     };
@@ -118,8 +119,8 @@ export function PresetDialog({
             <AudioOptions
               format={audioFormat}
               onFormatChange={setAudioFormat}
-              bitrateMode={bitrateMode}
-              onBitrateModeChange={setBitrateMode}
+              quality={audioQuality}
+              onQualityChange={setAudioQuality}
             />
           )}
         </div>

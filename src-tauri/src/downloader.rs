@@ -9,7 +9,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use crate::binaries;
 use crate::history;
 use crate::settings::Settings;
-use crate::types::{now_unix, DownloadTask, HistoryEntry, TaskStatus};
+use crate::types::{now_unix, DownloadOptions, DownloadTask, HistoryEntry, TaskStatus};
 
 pub struct AppState {
     pub queue: Mutex<Vec<DownloadTask>>,
@@ -249,16 +249,27 @@ fn build_args(
     // Format selection
     if is_audio {
         args.extend(["-f".into(), opts.format.clone().unwrap_or_else(|| "ba/b".into())]);
-        args.extend(["-x".into(), "--audio-format".into(), audio_format.to_string()]);
-        if audio_format == "mp3" && opts.bitrate_mode.as_deref().unwrap_or("cbr") == "cbr" {
-            let kbps = cbr_bitrate(opts.source_abr);
-            args.extend(["--audio-quality".into(), format!("{kbps}K")]);
-            args.extend([
-                "--postprocessor-args".into(),
-                "ExtractAudio:-joint_stereo 1".into(),
-            ]);
-        } else {
-            args.extend(["--audio-quality".into(), "0".into()]);
+        args.push("-x".into());
+        // "source" keeps the original audio stream — no re-encode, no format flag.
+        if audio_format != "source" {
+            args.extend(["--audio-format".into(), audio_format.to_string()]);
+        }
+        // Bitrate/quality only applies to lossy re-encoded formats.
+        if is_lossy_audio(audio_format) {
+            let quality = resolve_audio_quality(opts);
+            let arg = match quality {
+                "vbr" => "0".to_string(),
+                "match" => format!("{}K", cbr_bitrate(opts.source_abr)),
+                kbps => format!("{kbps}K"), // forced CBR, e.g. "320"
+            };
+            args.extend(["--audio-quality".into(), arg]);
+            // Joint stereo squeezes more quality from constant-bitrate MP3.
+            if audio_format == "mp3" && quality != "vbr" {
+                args.extend([
+                    "--postprocessor-args".into(),
+                    "ExtractAudio:-joint_stereo 1".into(),
+                ]);
+            }
         }
     } else {
         args.extend([
@@ -300,6 +311,23 @@ fn build_args(
     args.push("--".into());
     args.push(opts.url.clone());
     Ok(args)
+}
+
+/// Formats that are lossy re-encodes and honour a bitrate/quality setting.
+fn is_lossy_audio(format: &str) -> bool {
+    matches!(format, "mp3" | "aac" | "opus")
+}
+
+/// Resolve the bitrate/quality for lossy audio, mapping the legacy
+/// `bitrate_mode` field when a task predates the `audio_quality` option.
+fn resolve_audio_quality(opts: &DownloadOptions) -> &str {
+    if let Some(q) = opts.audio_quality.as_deref().filter(|s| !s.is_empty()) {
+        return q;
+    }
+    match opts.bitrate_mode.as_deref() {
+        Some("vbr") => "vbr",
+        _ => "match",
+    }
 }
 
 /// Pick the smallest standard MP3 CBR bitrate that covers the source
@@ -369,11 +397,12 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         s.clone()
     };
 
-    // CBR needs the source bitrate to pick a matching encode rate; probe it
-    // when the task was queued without prior analysis (e.g. playlist tracks).
+    // "Match source" needs the source bitrate to pick a matching encode rate;
+    // probe it when the task was queued without prior analysis (e.g. playlist
+    // tracks).
     if task.options.kind == "audio"
-        && task.options.audio_format.as_deref().unwrap_or("mp3") == "mp3"
-        && task.options.bitrate_mode.as_deref().unwrap_or("cbr") == "cbr"
+        && is_lossy_audio(task.options.audio_format.as_deref().unwrap_or("mp3"))
+        && resolve_audio_quality(&task.options) == "match"
         && task.options.source_abr.is_none()
         && !task.options.playlist
     {

@@ -4,6 +4,8 @@
 import type {
   AnalyzeResult,
   AudioFormat,
+  AudioQuality,
+  BitrateMode,
   DownloadOptions,
   HistoryEntry,
   Preset,
@@ -16,7 +18,37 @@ export const AUDIO_FORMATS: { value: AudioFormat; label: string; hint: MsgKey }[
   { value: "wav", label: "WAV", hint: "dl.hintUncompressed" },
   { value: "aac", label: "AAC", hint: "dl.hintEfficient" },
   { value: "opus", label: "OPUS", hint: "dl.hintBestQuality" },
+  { value: "source", label: "Original", hint: "dl.hintOriginal" },
 ];
+
+/** Formats that are lossy re-encodes and take a bitrate/quality setting. */
+export const LOSSY_FORMATS: AudioFormat[] = ["mp3", "aac", "opus"];
+
+/** Bitrate/quality options for lossy audio. Numeric labels are literal kbps. */
+export const AUDIO_QUALITIES: { value: AudioQuality; label: string | null; hint: MsgKey }[] = [
+  { value: "match", label: null, hint: "dl.qMatch" },
+  { value: "320", label: "320 kbps", hint: "dl.qForced" },
+  { value: "256", label: "256 kbps", hint: "dl.qForced" },
+  { value: "192", label: "192 kbps", hint: "dl.qForced" },
+  { value: "128", label: "128 kbps", hint: "dl.qForced" },
+  { value: "vbr", label: null, hint: "dl.qVbr" },
+];
+
+/** Resolve a preset's audio quality, mapping the legacy bitrateMode field. */
+export function presetAudioQuality(preset: {
+  audioQuality?: AudioQuality | null;
+  bitrateMode?: BitrateMode | null;
+}): AudioQuality {
+  if (preset.audioQuality) return preset.audioQuality;
+  return preset.bitrateMode === "vbr" ? "vbr" : "match";
+}
+
+/** Short human label for an audio quality value. */
+export function audioQualityLabel(q: AudioQuality, t: (k: MsgKey) => string): string {
+  const found = AUDIO_QUALITIES.find((a) => a.value === q);
+  if (!found) return q;
+  return found.label ?? t(found.hint === "dl.qVbr" ? "dl.qVbrShort" : "dl.qMatchShort");
+}
 
 export const VIDEO_PRESETS: {
   value: string;
@@ -40,12 +72,20 @@ export function videoPresetLabel(
   return p.label ? t(p.label) : p.fixed ?? p.value;
 }
 
-/** Short human summary of a preset, e.g. "1080p" or "MP3 · CBR". */
+/** Short human summary of a preset, e.g. "1080p" or "MP3 · 320 kbps". */
 export function presetSummary(preset: Preset, t: (k: MsgKey) => string): string {
   if (preset.kind === "audio") {
-    return `${preset.audioFormat.toUpperCase()} · ${preset.bitrateMode.toUpperCase()}`;
+    const fmt = audioFormatLabel(preset.audioFormat);
+    // Lossless / original formats have no meaningful bitrate to show.
+    if (!LOSSY_FORMATS.includes(preset.audioFormat)) return fmt;
+    return `${fmt} · ${audioQualityLabel(presetAudioQuality(preset), t)}`;
   }
   return videoPresetLabel(preset.videoPreset, t);
+}
+
+/** Display label for an audio format value. */
+export function audioFormatLabel(f: AudioFormat): string {
+  return AUDIO_FORMATS.find((x) => x.value === f)?.label ?? f.toUpperCase();
 }
 
 /** True when a completed history entry matches this URL / media id. */
@@ -82,9 +122,9 @@ export function optionsFromPreset(
     url: ctx.url,
     kind: preset.kind,
     format: audio ? "ba/b" : vp.f,
-    formatNote: audio ? preset.audioFormat.toUpperCase() : videoPresetLabel(vp.value, t),
+    formatNote: audio ? presetSummary(preset, t) : videoPresetLabel(vp.value, t),
     audioFormat: audio ? preset.audioFormat : null,
-    bitrateMode: audio ? preset.bitrateMode : null,
+    audioQuality: audio ? presetAudioQuality(preset) : null,
     sourceAbr: audio ? ctx.sourceAbr ?? null : null,
     playlist: false,
     subtitleLangs: !audio && preset.subtitleLangs ? preset.subtitleLangs : null,

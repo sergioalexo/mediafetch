@@ -10,12 +10,21 @@ pub struct Preset {
     pub name: String,
     pub kind: String,         // "video" | "audio"
     pub video_preset: String, // quality preset value, e.g. "best" | "1080"
-    pub audio_format: String, // "mp3" | "flac" | ...
-    pub bitrate_mode: String, // "cbr" | "vbr"
+    pub audio_format: String, // "mp3" | "flac" | "wav" | "aac" | "opus" | "source"
+    // "match" | "320" | "256" | "192" | "128" | "vbr" (lossy formats only).
+    #[serde(default = "default_audio_quality")]
+    pub audio_quality: String,
+    // Legacy MP3 bitrate mode ("cbr" | "vbr"), kept for backward compat.
+    #[serde(default)]
+    pub bitrate_mode: Option<String>,
     #[serde(default)]
     pub subtitle_langs: Option<String>,
     #[serde(default)]
     pub embed_subs: Option<bool>,
+}
+
+fn default_audio_quality() -> String {
+    "match".into()
 }
 
 fn default_presets() -> Vec<Preset> {
@@ -26,7 +35,8 @@ fn default_presets() -> Vec<Preset> {
             kind: "video".into(),
             video_preset: "best".into(),
             audio_format: "mp3".into(),
-            bitrate_mode: "cbr".into(),
+            audio_quality: "match".into(),
+            bitrate_mode: None,
             subtitle_langs: None,
             embed_subs: None,
         },
@@ -36,7 +46,8 @@ fn default_presets() -> Vec<Preset> {
             kind: "audio".into(),
             video_preset: "best".into(),
             audio_format: "mp3".into(),
-            bitrate_mode: "cbr".into(),
+            audio_quality: "match".into(),
+            bitrate_mode: None,
             subtitle_langs: None,
             embed_subs: None,
         },
