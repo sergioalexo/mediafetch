@@ -28,7 +28,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const IS_MAC = navigator.userAgent.includes("Mac");
+
 function BinaryCard({ bin }: { bin: BinaryStatus }) {
+  // No official macOS FFmpeg builds exist upstream — it comes from Homebrew.
+  const homebrewOnly = IS_MAC && bin.name === "ffmpeg";
   const progress = useApp((s) => s.binaryProgress[bin.name]);
   const toast = useApp((s) => s.toast);
   const refresh = useApp((s) => s.refreshBinaries);
@@ -114,7 +118,17 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
           </div>
 
           <div className="flex shrink-0 flex-col items-end gap-1.5">
-            {bin.installed && !bin.updateAvailable ? null : (
+            {homebrewOnly ? (
+              !bin.installed && (
+                <div className="max-w-52 rounded-lg border px-3 py-2 text-right text-xs text-muted-foreground">
+                  Install with Homebrew:
+                  <div className="mt-0.5 select-text font-mono text-foreground">
+                    brew install ffmpeg
+                  </div>
+                  MediaFetch picks it up automatically.
+                </div>
+              )
+            ) : bin.installed && !bin.updateAvailable ? null : (
               <Button size="sm" onClick={() => install()} disabled={!!busy}>
                 {busy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -129,6 +143,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 <Undo2 className="h-3.5 w-3.5" /> Roll back
               </Button>
             )}
+            {!homebrewOnly && (
             <Select
               value=""
               onValueChange={(tag) => void install(tag)}
@@ -163,6 +178,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 )}
               </SelectContent>
             </Select>
+            )}
           </div>
         </div>
 

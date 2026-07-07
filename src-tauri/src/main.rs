@@ -307,9 +307,10 @@ fn version_newer(latest: &str, current: &str) -> bool {
 }
 
 #[tauri::command]
-async fn check_app_update(app: AppHandle) -> AppUpdateStatus {
+async fn check_app_update(app: AppHandle, state: State<'_, AppState>) -> Result<AppUpdateStatus, ()> {
     let current_version = app.package_info().version.to_string();
-    let latest_version = binaries::latest_release_tag(APP_REPO)
+    let proxy = state.settings.lock().unwrap().proxy.trim().to_string();
+    let latest_version = binaries::latest_release_tag(APP_REPO, &proxy)
         .await
         .ok()
         .map(|t| t.trim_start_matches('v').to_string());
@@ -317,12 +318,12 @@ async fn check_app_update(app: AppHandle) -> AppUpdateStatus {
         .as_deref()
         .map(|l| version_newer(l, &current_version))
         .unwrap_or(false);
-    AppUpdateStatus {
+    Ok(AppUpdateStatus {
         current_version,
         latest_version,
         update_available,
         releases_url: format!("https://github.com/{APP_REPO}/releases"),
-    }
+    })
 }
 
 // ---------- Binaries module ----------
@@ -345,8 +346,8 @@ async fn install_binary(
 }
 
 #[tauri::command]
-async fn list_binary_versions(name: String) -> Result<Vec<String>, String> {
-    binaries::list_versions(&name).await
+async fn list_binary_versions(app: AppHandle, name: String) -> Result<Vec<String>, String> {
+    binaries::list_versions(&app, &name).await
 }
 
 #[tauri::command]

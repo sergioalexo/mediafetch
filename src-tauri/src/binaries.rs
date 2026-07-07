@@ -214,20 +214,30 @@ fn ffmpeg_installed_tag(app: &AppHandle) -> Option<String> {
     std::fs::read_to_string(tag_file).ok().map(|s| s.trim().to_string())
 }
 
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .user_agent("MediaFetch/0.1 (https://github.com)")
-        .build()
-        .map_err(|e| e.to_string())
+/// The proxy configured in the app settings ("" when unset).
+fn app_proxy(app: &AppHandle) -> String {
+    let state = app.state::<crate::downloader::AppState>();
+    let s = state.settings.lock().unwrap();
+    s.proxy.trim().to_string()
+}
+
+fn http_client(proxy: &str) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder().user_agent("MediaFetch (https://github.com)");
+    if !proxy.is_empty() {
+        builder = builder.proxy(
+            reqwest::Proxy::all(proxy).map_err(|e| format!("invalid proxy setting: {e}"))?,
+        );
+    }
+    builder.build().map_err(|e| e.to_string())
 }
 
 /// Latest release tag of a GitHub repository, e.g. "v0.2.0".
-pub async fn latest_release_tag(repo: &str) -> Result<String, String> {
-    latest_release(repo).await.map(|r| r.tag_name)
+pub async fn latest_release_tag(repo: &str, proxy: &str) -> Result<String, String> {
+    latest_release(repo, proxy).await.map(|r| r.tag_name)
 }
 
-async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, String> {
-    let client = http_client()?;
+async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str, proxy: &str) -> Result<T, String> {
+    let client = http_client(proxy)?;
     let resp = client
         .get(url)
         .send()
@@ -241,17 +251,19 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, Stri
         .map_err(|e| format!("Bad GitHub API response: {e}"))
 }
 
-async fn latest_release(repo: &str) -> Result<GhRelease, String> {
-    fetch_json(&format!(
-        "https://api.github.com/repos/{repo}/releases/latest"
-    ))
+async fn latest_release(repo: &str, proxy: &str) -> Result<GhRelease, String> {
+    fetch_json(
+        &format!("https://api.github.com/repos/{repo}/releases/latest"),
+        proxy,
+    )
     .await
 }
 
-async fn release_by_tag(repo: &str, tag: &str) -> Result<GhRelease, String> {
-    fetch_json(&format!(
-        "https://api.github.com/repos/{repo}/releases/tags/{tag}"
-    ))
+async fn release_by_tag(repo: &str, tag: &str, proxy: &str) -> Result<GhRelease, String> {
+    fetch_json(
+        &format!("https://api.github.com/repos/{repo}/releases/tags/{tag}"),
+        proxy,
+    )
     .await
 }
 
@@ -264,11 +276,12 @@ fn repo_for(name: &str) -> Result<&'static str, String> {
 }
 
 /// Recent release tags of a component, newest first.
-pub async fn list_versions(name: &str) -> Result<Vec<String>, String> {
+pub async fn list_versions(app: &AppHandle, name: &str) -> Result<Vec<String>, String> {
     let repo = repo_for(name)?;
-    let releases: Vec<GhRelease> = fetch_json(&format!(
-        "https://api.github.com/repos/{repo}/releases?per_page=20"
-    ))
+    let releases: Vec<GhRelease> = fetch_json(
+        &format!("https://api.github.com/repos/{repo}/releases?per_page=20"),
+        &app_proxy(app),
+    )
     .await?;
     Ok(releases
         .into_iter()
@@ -279,12 +292,13 @@ pub async fn list_versions(name: &str) -> Result<Vec<String>, String> {
 
 pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus> {
     let mut out = Vec::new();
+    let proxy = app_proxy(app);
 
     // ---- yt-dlp ----
     let ytdlp = resolve(app, YTDLP);
     let ytdlp_version = ytdlp.as_ref().and_then(|(p, _)| run_version(p, "--version"));
     let ytdlp_latest = if check_latest {
-        latest_release(YTDLP_REPO).await.ok().map(|r| r.tag_name)
+        latest_release(YTDLP_REPO, &proxy).await.ok().map(|r| r.tag_name)
     } else {
         None
     };
@@ -317,7 +331,7 @@ pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus
     });
     let installed_tag = ffmpeg_installed_tag(app);
     let ffmpeg_latest = if check_latest {
-        latest_release(FFMPEG_REPO).await.ok().map(|r| r.tag_name)
+        latest_release(FFMPEG_REPO, &proxy).await.ok().map(|r| r.tag_name)
     } else {
         None
     };
@@ -356,14 +370,14 @@ async fn download_with_progress(
     expected_size: u64,
     dest: &PathBuf,
 ) -> Result<(), String> {
-    let client = http_client()?;
+    let client = http_client(&app_proxy(app))?;
     let resp = client
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("download failed: {e}"))?;
+        .map_err(|e| format!("download of {url} failed: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("download failed: HTTP {}", resp.status()));
+        return Err(format!("download of {url} failed: HTTP {}", resp.status()));
     }
     let total = resp.content_length().unwrap_or(expected_size);
     let tmp = dest.with_extension("part");
@@ -426,9 +440,10 @@ pub async fn install(app: &AppHandle, name: &str, version: Option<&str>) -> Resu
 async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Result<(), String> {
     let dir = bin_dir(app)?;
     backup_current(app, name)?;
+    let proxy = app_proxy(app);
     let release = match version {
-        Some(tag) => release_by_tag(repo_for(name)?, tag).await?,
-        None => latest_release(repo_for(name)?).await?,
+        Some(tag) => release_by_tag(repo_for(name)?, tag, &proxy).await?,
+        None => latest_release(repo_for(name)?, &proxy).await?,
     };
     match name {
         YTDLP => {
