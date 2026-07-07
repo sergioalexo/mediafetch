@@ -30,6 +30,7 @@ pub struct Settings {
     pub audio_bitrate_mode: String, // "cbr" | "vbr"
     // The user confirmed the legal disclaimer on first launch.
     pub disclaimer_accepted: bool,
+    pub language: String, // "en" | "uk" | "ru"
 }
 
 impl Default for Settings {
@@ -58,6 +59,7 @@ impl Default for Settings {
             last_audio_format: "mp3".into(),
             audio_bitrate_mode: "cbr".into(),
             disclaimer_accepted: false,
+            language: "en".into(),
         }
     }
 }

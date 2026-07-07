@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { FolderOpen, Music, Play, Search, Trash2, Video, X } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { useT } from "@/lib/i18n";
 import * as api from "@/lib/api";
 import { formatBytes, formatDate, formatSpeed } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 export function HistoryPage() {
   const history = useApp((s) => s.history);
   const toast = useApp((s) => s.toast);
+  const t = useT();
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
@@ -30,8 +32,10 @@ export function HistoryPage() {
     <div className="mx-auto max-w-3xl space-y-4 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">History</h1>
-          <p className="text-sm text-muted-foreground">{history.length} downloads recorded</p>
+          <h1 className="text-xl font-bold">{t("h.title")}</h1>
+          <p className="text-sm text-muted-foreground">
+            {t("h.recorded", { n: history.length })}
+          </p>
         </div>
         {history.length > 0 && (
           <Button
@@ -40,10 +44,10 @@ export function HistoryPage() {
             onClick={async () => {
               await api.clearHistory();
               await refresh();
-              toast({ title: "History cleared", variant: "default" });
+              toast({ title: t("h.cleared"), variant: "default" });
             }}
           >
-            <Trash2 className="h-3.5 w-3.5" /> Clear all
+            <Trash2 className="h-3.5 w-3.5" /> {t("h.clearAll")}
           </Button>
         )}
       </div>
@@ -53,7 +57,7 @@ export function HistoryPage() {
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search downloads…"
+          placeholder={t("h.search")}
           className="pl-9"
         />
         {query && (
@@ -86,11 +90,15 @@ export function HistoryPage() {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span>{formatDate(h.downloadedAt)}</span>
                 {h.filesize > 0 && <span>· {formatBytes(h.filesize)}</span>}
-                {h.avgSpeed > 0 && <span>· {formatSpeed(h.avgSpeed)} avg</span>}
+                {h.avgSpeed > 0 && (
+                  <span>
+                    · {formatSpeed(h.avgSpeed)} {t("h.avg")}
+                  </span>
+                )}
                 {h.formatNote && <span>· {h.formatNote}</span>}
               </div>
             </div>
-            {h.status === "failed" && <Badge variant="destructive">failed</Badge>}
+            {h.status === "failed" && <Badge variant="destructive">{t("h.failed")}</Badge>}
             <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
               {h.filename && h.status === "completed" && (
                 <>
@@ -100,7 +108,7 @@ export function HistoryPage() {
                         <Play className="h-3.5 w-3.5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Open file</TooltipContent>
+                    <TooltipContent>{t("h.openFile")}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -112,7 +120,7 @@ export function HistoryPage() {
                         <FolderOpen className="h-3.5 w-3.5" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>Show in folder</TooltipContent>
+                    <TooltipContent>{t("q.showInFolder")}</TooltipContent>
                   </Tooltip>
                 </>
               )}
@@ -129,14 +137,14 @@ export function HistoryPage() {
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Remove entry</TooltipContent>
+                <TooltipContent>{t("h.removeEntry")}</TooltipContent>
               </Tooltip>
             </div>
           </div>
         ))}
         {filtered.length === 0 && (
           <div className="rounded-xl border border-dashed py-14 text-center text-sm text-muted-foreground">
-            {history.length === 0 ? "No downloads yet." : "No matches."}
+            {history.length === 0 ? t("h.none") : t("h.noMatches")}
           </div>
         )}
       </div>

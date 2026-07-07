@@ -12,17 +12,18 @@ import {
 import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
 import { useApp, type Page } from "@/lib/store";
+import { useT, type MsgKey } from "@/lib/i18n";
 import { Badge } from "@/components/ui/badge";
 import logoBlack from "@/assets/logo-sergioalexo-black.svg";
 import logoWhite from "@/assets/logo-sergioalexo-white.svg";
 
-const NAV: { page: Page; label: string; icon: typeof Download }[] = [
-  { page: "downloads", label: "Download", icon: Download },
-  { page: "queue", label: "Queue", icon: ListOrdered },
-  { page: "history", label: "History", icon: History },
-  { page: "stats", label: "Statistics", icon: BarChart3 },
-  { page: "binaries", label: "Components", icon: Package },
-  { page: "settings", label: "Settings", icon: Settings },
+const NAV: { page: Page; label: MsgKey; icon: typeof Download }[] = [
+  { page: "downloads", label: "nav.download", icon: Download },
+  { page: "queue", label: "nav.queue", icon: ListOrdered },
+  { page: "history", label: "nav.history", icon: History },
+  { page: "stats", label: "nav.stats", icon: BarChart3 },
+  { page: "binaries", label: "nav.components", icon: Package },
+  { page: "settings", label: "nav.settings", icon: Settings },
 ];
 
 export function Sidebar() {
@@ -34,6 +35,7 @@ export function Sidebar() {
   const updateSettings = useApp((s) => s.updateSettings);
 
   const appUpdate = useApp((s) => s.appUpdate);
+  const t = useT();
 
   const activeCount = queue.filter(
     (t) => t.status === "downloading" || t.status === "queued" || t.status === "postprocessing"
@@ -98,7 +100,7 @@ export function Sidebar() {
                 />
               )}
               <Icon className="relative z-10 h-4 w-4" />
-              <span className="relative z-10 flex-1 text-left font-medium">{label}</span>
+              <span className="relative z-10 flex-1 text-left font-medium">{t(label)}</span>
               {p === "queue" && activeCount > 0 && (
                 <Badge className="relative z-10 h-5 min-w-5 justify-center px-1.5">
                   {activeCount}
@@ -121,7 +123,7 @@ export function Sidebar() {
         >
           {settings?.theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           <span className="font-medium">
-            {settings?.theme === "dark" ? "Light mode" : "Dark mode"}
+            {settings?.theme === "dark" ? t("theme.light") : t("theme.dark")}
           </span>
         </button>
       </div>

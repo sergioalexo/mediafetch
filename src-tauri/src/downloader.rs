@@ -611,10 +611,11 @@ async fn finish_history(app: &AppHandle, task: &DownloadTask, settings: &Setting
     let _ = app.emit("history-added", &entry);
 
     if settings.notifications {
-        crate::notify::show(
-            app,
-            if ok { "Download complete" } else { "Download failed" },
-            &task.title,
-        );
+        let (done_title, fail_title) = match settings.language.as_str() {
+            "uk" => ("Завантаження завершено", "Помилка завантаження"),
+            "ru" => ("Загрузка завершена", "Ошибка загрузки"),
+            _ => ("Download complete", "Download failed"),
+        };
+        crate::notify::show(app, if ok { done_title } else { fail_title }, &task.title);
     }
 }

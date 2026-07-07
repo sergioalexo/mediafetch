@@ -1,6 +1,7 @@
 import { AnimatePresence } from "framer-motion";
 import { ListX, PackageOpen } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { useT } from "@/lib/i18n";
 import * as api from "@/lib/api";
 import { QueueItem } from "@/components/QueueItem";
 import { SpeedGraph } from "@/components/SpeedGraph";
@@ -9,6 +10,7 @@ import { Button } from "@/components/ui/button";
 export function QueuePage() {
   const queue = useApp((s) => s.queue);
   const samples = useApp((s) => s.speedSamples);
+  const t = useT();
 
   const active = queue.filter(
     (t) => t.status === "downloading" || t.status === "postprocessing"
@@ -21,18 +23,21 @@ export function QueuePage() {
     <div className="mx-auto max-w-3xl space-y-4 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">Queue</h1>
+          <h1 className="text-xl font-bold">{t("q.title")}</h1>
           <p className="text-sm text-muted-foreground">
             {active.length > 0
-              ? `${active.length} active · ${queue.filter((t) => t.status === "queued").length} waiting`
+              ? t("q.activeWaiting", {
+                  a: active.length,
+                  w: queue.filter((t) => t.status === "queued").length,
+                })
               : queue.length === 0
-                ? "Nothing queued"
-                : `${queue.length} item${queue.length > 1 ? "s" : ""}`}
+                ? t("q.nothing")
+                : t("q.items", { n: queue.length })}
           </p>
         </div>
         {finished.length > 0 && (
           <Button variant="outline" size="sm" onClick={() => api.clearFinished()}>
-            <ListX className="h-3.5 w-3.5" /> Clear finished
+            <ListX className="h-3.5 w-3.5" /> {t("q.clearFinished")}
           </Button>
         )}
       </div>
@@ -42,7 +47,7 @@ export function QueuePage() {
       {queue.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed py-16 text-muted-foreground">
           <PackageOpen className="h-10 w-10 opacity-40" />
-          <div className="text-sm">The queue is empty — add a URL on the Download page.</div>
+          <div className="text-sm">{t("q.empty")}</div>
         </div>
       ) : (
         <div className="space-y-2">

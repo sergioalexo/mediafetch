@@ -9,6 +9,7 @@ import type {
   Settings,
 } from "./types";
 import * as api from "./api";
+import { translate } from "./i18n";
 
 export type Page = "downloads" | "queue" | "history" | "stats" | "settings" | "binaries";
 
@@ -137,15 +138,16 @@ export const useApp = create<AppState>((set, get) => ({
     await listen<HistoryEntry>("history-added", (e) => {
       set((s) => ({ history: [e.payload, ...s.history] }));
       const entry = e.payload;
+      const lang = get().settings?.language ?? "en";
       if (entry.status === "completed") {
         get().toast({
-          title: "Download complete",
+          title: translate(lang, "t.downloadComplete"),
           description: entry.title,
           variant: "success",
         });
       } else {
         get().toast({
-          title: "Download failed",
+          title: translate(lang, "t.downloadFailed"),
           description: entry.title,
           variant: "error",
         });

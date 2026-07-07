@@ -24,6 +24,7 @@ import type {
 } from "@/lib/types";
 import * as api from "@/lib/api";
 import { useApp } from "@/lib/store";
+import { useT, type MsgKey } from "@/lib/i18n";
 import { cn, codecLabel, extractUrls, formatBytes, formatDuration } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,22 +43,29 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 
-const AUDIO_FORMATS: { value: AudioFormat; label: string; hint: string }[] = [
-  { value: "mp3", label: "MP3", hint: "universal" },
-  { value: "flac", label: "FLAC", hint: "lossless" },
-  { value: "wav", label: "WAV", hint: "uncompressed" },
-  { value: "aac", label: "AAC", hint: "efficient" },
-  { value: "opus", label: "OPUS", hint: "best quality/size" },
+const AUDIO_FORMATS: { value: AudioFormat; label: string; hint: MsgKey }[] = [
+  { value: "mp3", label: "MP3", hint: "dl.hintUniversal" },
+  { value: "flac", label: "FLAC", hint: "dl.hintLossless" },
+  { value: "wav", label: "WAV", hint: "dl.hintUncompressed" },
+  { value: "aac", label: "AAC", hint: "dl.hintEfficient" },
+  { value: "opus", label: "OPUS", hint: "dl.hintBestQuality" },
 ];
 
-const PRESETS = [
-  { value: "best", label: "Best available", f: "bv*+ba/b" },
-  { value: "2160", label: "4K (2160p)", f: "bv*[height<=2160]+ba/b" },
-  { value: "1440", label: "1440p", f: "bv*[height<=1440]+ba/b" },
-  { value: "1080", label: "1080p", f: "bv*[height<=1080]+ba/b" },
-  { value: "720", label: "720p", f: "bv*[height<=720]+ba/b" },
-  { value: "480", label: "480p", f: "bv*[height<=480]+ba/b" },
+const PRESETS: { value: string; label: MsgKey | null; fixed?: string; f: string }[] = [
+  { value: "best", label: "dl.bestAvailable", f: "bv*+ba/b" },
+  { value: "2160", label: null, fixed: "4K (2160p)", f: "bv*[height<=2160]+ba/b" },
+  { value: "1440", label: null, fixed: "1440p", f: "bv*[height<=1440]+ba/b" },
+  { value: "1080", label: null, fixed: "1080p", f: "bv*[height<=1080]+ba/b" },
+  { value: "720", label: null, fixed: "720p", f: "bv*[height<=720]+ba/b" },
+  { value: "480", label: null, fixed: "480p", f: "bv*[height<=480]+ba/b" },
 ];
+
+function presetLabel(
+  p: (typeof PRESETS)[number],
+  t: (k: MsgKey) => string
+): string {
+  return p.label ? t(p.label) : p.fixed ?? p.value;
+}
 
 /** True when a completed history entry matches this URL / media id. */
 function isAlreadyDownloaded(url: string, id?: string | null): boolean {
@@ -119,6 +127,7 @@ export function DownloadsPage() {
   const setPage = useApp((s) => s.setPage);
   const updateSettings = useApp((s) => s.updateSettings);
   const history = useApp((s) => s.history);
+  const t = useT();
 
   const [input, setInput] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -218,7 +227,7 @@ export function DownloadsPage() {
       const text = await navigator.clipboard.readText();
       if (text) setInput((cur) => (cur ? cur + "\n" + text : text));
     } catch {
-      toast({ title: "Clipboard unavailable", variant: "error" });
+      toast({ title: t("dl.clipboardUnavailable"), variant: "error" });
     }
   };
 
@@ -263,7 +272,7 @@ export function DownloadsPage() {
       };
     }
     const p = PRESETS.find((p) => p.value === preset) ?? PRESETS[0];
-    return { format: p.f, note: p.label };
+    return { format: p.f, note: presetLabel(p, t) };
   };
 
   const metaOverrides = () => {
@@ -295,7 +304,7 @@ export function DownloadsPage() {
       thumbnail: result.thumbnail,
     };
     await api.enqueue([opts]);
-    toast({ title: "Added to queue", description: result.title, variant: "success" });
+    toast({ title: t("dl.addedToQueue"), description: result.title, variant: "success" });
     setInput("");
     reset();
     setPage("queue");
@@ -314,7 +323,7 @@ export function DownloadsPage() {
         url: e.url,
         kind,
         format: kind === "video" ? p.f : "ba/b",
-        formatNote: kind === "video" ? p.label : audioFormat.toUpperCase(),
+        formatNote: kind === "video" ? presetLabel(p, t) : audioFormat.toUpperCase(),
         audioFormat: kind === "audio" ? audioFormat : null,
         bitrateMode: kind === "audio" ? bitrateMode : null,
         playlist: false,
@@ -325,8 +334,8 @@ export function DownloadsPage() {
     if (items.length === 0) return;
     await api.enqueue(items);
     toast({
-      title: "Playlist added to queue",
-      description: `${items.length} track(s) · ${result.title}`,
+      title: t("dl.playlistQueued"),
+      description: t("dl.tracksOf", { n: items.length, title: result.title }),
       variant: "success",
     });
     setInput("");
@@ -340,14 +349,14 @@ export function DownloadsPage() {
       url,
       kind,
       format: kind === "video" ? p.f : "ba/b",
-      formatNote: kind === "video" ? p.label : audioFormat.toUpperCase(),
+      formatNote: kind === "video" ? presetLabel(p, t) : audioFormat.toUpperCase(),
       audioFormat: kind === "audio" ? audioFormat : null,
       bitrateMode: kind === "audio" ? bitrateMode : null,
       playlist: false,
       metadata: null,
     }));
     await api.enqueue(items);
-    toast({ title: `${items.length} downloads queued`, variant: "success" });
+    toast({ title: t("dl.nQueued", { n: items.length }), variant: "success" });
     setInput("");
     reset();
     setPage("queue");
@@ -372,10 +381,8 @@ export function DownloadsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
       <div>
-        <h1 className="text-xl font-bold">Download</h1>
-        <p className="text-sm text-muted-foreground">
-          Paste video, playlist or channel URLs — one per line. Drag &amp; drop works too.
-        </p>
+        <h1 className="text-xl font-bold">{t("dl.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("dl.subtitle")}</p>
       </div>
 
       {/* URL input / drop zone */}
@@ -409,13 +416,11 @@ export function DownloadsPage() {
         <div className="mt-2 flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Link2 className="h-3.5 w-3.5" />
-            {urls.length === 0
-              ? "No URLs detected"
-              : `${urls.length} URL${urls.length > 1 ? "s" : ""} detected`}
+            {urls.length === 0 ? t("dl.noUrls") : t("dl.urlsDetected", { n: urls.length })}
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={paste}>
-              <ClipboardPaste className="h-3.5 w-3.5" /> Paste
+              <ClipboardPaste className="h-3.5 w-3.5" /> {t("dl.paste")}
             </Button>
             {input && (
               <Button
@@ -426,7 +431,7 @@ export function DownloadsPage() {
                   reset();
                 }}
               >
-                <X className="h-3.5 w-3.5" /> Clear
+                <X className="h-3.5 w-3.5" /> {t("dl.clear")}
               </Button>
             )}
             {urls.length === 1 && (
@@ -436,7 +441,7 @@ export function DownloadsPage() {
                 ) : (
                   <Search className="h-3.5 w-3.5" />
                 )}
-                Analyze
+                {t("dl.analyze")}
               </Button>
             )}
           </div>
@@ -447,7 +452,7 @@ export function DownloadsPage() {
         <Card>
           <CardContent className="flex items-center gap-3 p-4 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin text-primary" />
-            Fetching media information…
+            {t("dl.fetching")}
           </CardContent>
         </Card>
       )}
@@ -455,7 +460,7 @@ export function DownloadsPage() {
       {analyzeError && (
         <Card className="border-destructive/40">
           <CardContent className="p-4">
-            <div className="text-sm font-medium text-destructive">Could not analyze URL</div>
+            <div className="text-sm font-medium text-destructive">{t("dl.analyzeFailed")}</div>
             <div className="mt-1 break-all text-xs text-muted-foreground">{analyzeError}</div>
           </CardContent>
         </Card>
@@ -467,7 +472,7 @@ export function DownloadsPage() {
           <CardContent className="space-y-4 p-4">
             <div className="flex items-center gap-2 text-sm font-medium">
               <ListVideo className="h-4 w-4 text-primary" />
-              {urls.length} URLs — queue them all with one preset
+              {t("dl.manyUrls", { n: urls.length })}
             </div>
             <KindTabs kind={kind} setKind={setKind} />
             {kind === "video" ? (
@@ -481,7 +486,7 @@ export function DownloadsPage() {
               />
             )}
             <Button className="w-full" onClick={enqueueMany}>
-              <Download className="h-4 w-4" /> Add {urls.length} downloads to queue
+              <Download className="h-4 w-4" /> {t("dl.addMany", { n: urls.length })}
             </Button>
           </CardContent>
         </Card>
@@ -514,7 +519,7 @@ export function DownloadsPage() {
                     </div>
                     {qualityChoices.some((q) => q.hdr) && (
                       <Badge variant="hdr" className="mt-1.5">
-                        HDR available
+                        {t("dl.hdrAvailable")}
                       </Badge>
                     )}
                     {videoDownloaded && (
@@ -522,7 +527,7 @@ export function DownloadsPage() {
                         variant="secondary"
                         className="ml-1.5 mt-1.5 border-amber-500/40 bg-amber-500/15 text-amber-500"
                       >
-                        Already downloaded
+                        {t("dl.alreadyDownloaded")}
                       </Badge>
                     )}
                   </div>
@@ -533,10 +538,10 @@ export function DownloadsPage() {
                 {kind === "video" ? (
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Quality</Label>
+                      <Label className="text-xs text-muted-foreground">{t("dl.quality")}</Label>
                       <Select value={formatId} onValueChange={setFormatId}>
                         <SelectTrigger>
-                          <SelectValue placeholder="Select quality" />
+                          <SelectValue placeholder={t("dl.quality")} />
                         </SelectTrigger>
                         <SelectContent>
                           {qualityChoices.map((q) => (
@@ -562,13 +567,15 @@ export function DownloadsPage() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label className="text-xs text-muted-foreground">Audio language</Label>
+                      <Label className="text-xs text-muted-foreground">
+                        {t("dl.audioLang")}
+                      </Label>
                       <Select value={audioLang} onValueChange={setAudioLang}>
                         <SelectTrigger disabled={result.audioLanguages.length === 0}>
-                          <SelectValue placeholder="Default" />
+                          <SelectValue placeholder={t("dl.default")} />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="default">Default</SelectItem>
+                          <SelectItem value="default">{t("dl.default")}</SelectItem>
                           {result.audioLanguages.map((l) => (
                             <SelectItem key={l} value={l}>
                               {l}
@@ -591,7 +598,7 @@ export function DownloadsPage() {
                 {result.subtitles.length > 0 && kind === "video" && (
                   <div className="space-y-2">
                     <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Subtitles className="h-3.5 w-3.5" /> Subtitles
+                      <Subtitles className="h-3.5 w-3.5" /> {t("dl.subtitles")}
                       {subLangs.length > 0 && (
                         <Badge variant="secondary" className="px-1.5 py-0">
                           {subLangs.length}
@@ -615,7 +622,7 @@ export function DownloadsPage() {
                         ))}
                       {result.subtitles.filter((s) => !s.auto).length === 0 && (
                         <span className="text-xs text-muted-foreground">
-                          Only auto-generated captions available
+                          {t("dl.autoCaptionsOnly")}
                         </span>
                       )}
                     </div>
@@ -629,7 +636,7 @@ export function DownloadsPage() {
                     className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
                   >
                     <Pencil className="h-3.5 w-3.5" />
-                    Edit metadata {showMeta ? "▾" : "▸"}
+                    {t("dl.editMeta")} {showMeta ? "▾" : "▸"}
                   </button>
                   <AnimatePresence>
                     {showMeta && (
@@ -642,14 +649,14 @@ export function DownloadsPage() {
                         <div className="grid grid-cols-2 gap-3 pt-3">
                           {(
                             [
-                              ["title", "Title"],
-                              ["artist", "Artist"],
-                              ["album", "Album"],
-                              ["genre", "Genre"],
-                            ] as const
+                              ["title", "dl.metaTitle"],
+                              ["artist", "dl.metaArtist"],
+                              ["album", "dl.metaAlbum"],
+                              ["genre", "dl.metaGenre"],
+                            ] as [keyof typeof meta, MsgKey][]
                           ).map(([k, label]) => (
                             <div key={k} className="space-y-1">
-                              <Label className="text-xs text-muted-foreground">{label}</Label>
+                              <Label className="text-xs text-muted-foreground">{t(label)}</Label>
                               <Input
                                 value={meta[k]}
                                 onChange={(e) => setMeta({ ...meta, [k]: e.target.value })}
@@ -666,7 +673,7 @@ export function DownloadsPage() {
 
                 <Separator />
                 <Button className="w-full" onClick={enqueueSingle} disabled={!settings}>
-                  <Download className="h-4 w-4" /> Download{" "}
+                  <Download className="h-4 w-4" /> {t("dl.download")}{" "}
                   {kind === "audio" ? audioFormat.toUpperCase() : ""}
                 </Button>
               </CardContent>
@@ -690,7 +697,7 @@ export function DownloadsPage() {
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold">{result.title}</div>
                     <div className="text-xs text-muted-foreground">
-                      {result.entryCount ?? result.entries.length} videos
+                      {t("dl.videos", { n: result.entryCount ?? result.entries.length })}
                       {result.uploader ? ` · ${result.uploader}` : ""}
                     </div>
                   </div>
@@ -711,7 +718,7 @@ export function DownloadsPage() {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs text-muted-foreground">
-                      Items ({selectedEntries.size}/{result.entries.length} selected)
+                      {t("dl.items", { a: selectedEntries.size, b: result.entries.length })}
                     </Label>
                     <Button
                       variant="ghost"
@@ -726,8 +733,8 @@ export function DownloadsPage() {
                       }
                     >
                       {selectedEntries.size === result.entries.length
-                        ? "Deselect all"
-                        : "Select all"}
+                        ? t("dl.deselectAll")
+                        : t("dl.selectAll")}
                     </Button>
                   </div>
                   <div className="max-h-56 space-y-0.5 overflow-y-auto rounded-md border p-1.5">
@@ -753,7 +760,7 @@ export function DownloadsPage() {
                         <span className="min-w-0 flex-1 truncate">{entry.title}</span>
                         {entryDownloaded[i] && (
                           <span className="shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-1 text-[10px] font-medium text-amber-500">
-                            downloaded
+                            {t("dl.downloadedBadge")}
                           </span>
                         )}
                         {entry.duration ? (
@@ -771,8 +778,8 @@ export function DownloadsPage() {
                   onClick={enqueuePlaylist}
                   disabled={selectedEntries.size === 0}
                 >
-                  <Download className="h-4 w-4" /> Download {selectedEntries.size} item
-                  {selectedEntries.size === 1 ? "" : "s"}
+                  <Download className="h-4 w-4" />{" "}
+                  {t("dl.downloadN", { n: selectedEntries.size })}
                 </Button>
               </CardContent>
             </Card>
@@ -790,14 +797,15 @@ function KindTabs({
   kind: DownloadKind;
   setKind: (k: DownloadKind) => void;
 }) {
+  const t = useT();
   return (
     <Tabs value={kind} onValueChange={(v) => setKind(v as DownloadKind)}>
       <TabsList className="grid w-full grid-cols-2">
         <TabsTrigger value="video">
-          <Film className="h-3.5 w-3.5" /> Video
+          <Film className="h-3.5 w-3.5" /> {t("dl.video")}
         </TabsTrigger>
         <TabsTrigger value="audio">
-          <AudioLines className="h-3.5 w-3.5" /> Audio only
+          <AudioLines className="h-3.5 w-3.5" /> {t("dl.audioOnly")}
         </TabsTrigger>
       </TabsList>
     </Tabs>
@@ -811,9 +819,10 @@ function PresetSelect({
   preset: string;
   setPreset: (p: string) => void;
 }) {
+  const t = useT();
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs text-muted-foreground">Quality preset</Label>
+      <Label className="text-xs text-muted-foreground">{t("dl.qualityPreset")}</Label>
       <Select value={preset} onValueChange={setPreset}>
         <SelectTrigger>
           <SelectValue />
@@ -821,7 +830,7 @@ function PresetSelect({
         <SelectContent>
           {PRESETS.map((p) => (
             <SelectItem key={p.value} value={p.value}>
-              {p.label}
+              {presetLabel(p, t)}
             </SelectItem>
           ))}
         </SelectContent>
@@ -841,18 +850,19 @@ function AudioOptions({
   bitrateMode: BitrateMode;
   onBitrateModeChange: (v: BitrateMode) => void;
 }) {
+  const t = useT();
   return (
     <div className="space-y-3">
       <AudioFormatSelect value={format} onChange={onFormatChange} />
       {format === "mp3" && (
         <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Bitrate mode</Label>
+          <Label className="text-xs text-muted-foreground">{t("dl.bitrateMode")}</Label>
           <div className="grid grid-cols-2 gap-2">
             {(
               [
-                ["cbr", "CBR", "constant · joint stereo · matches source quality"],
-                ["vbr", "VBR", "variable · V0 best quality"],
-              ] as const
+                ["cbr", "CBR", t("dl.cbrHint")],
+                ["vbr", "VBR", t("dl.vbrHint")],
+              ] as [BitrateMode, string, string][]
             ).map(([value, label, hint]) => (
               <button
                 key={value}
@@ -882,9 +892,10 @@ function AudioFormatSelect({
   value: AudioFormat;
   onChange: (v: AudioFormat) => void;
 }) {
+  const t = useT();
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs text-muted-foreground">Audio format</Label>
+      <Label className="text-xs text-muted-foreground">{t("dl.audioFormat")}</Label>
       <div className="grid grid-cols-5 gap-2">
         {AUDIO_FORMATS.map((f) => (
           <button
@@ -899,7 +910,7 @@ function AudioFormatSelect({
           >
             <Music className="mb-1 h-3.5 w-3.5" />
             <span className="font-semibold">{f.label}</span>
-            <span className="text-[10px] opacity-70">{f.hint}</span>
+            <span className="text-[10px] opacity-70">{t(f.hint)}</span>
           </button>
         ))}
       </div>

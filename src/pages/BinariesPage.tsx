@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { BinaryStatus } from "@/lib/types";
 import { useApp } from "@/lib/store";
+import { useT } from "@/lib/i18n";
 import * as api from "@/lib/api";
 import { formatBytes } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -36,17 +37,25 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
   const progress = useApp((s) => s.binaryProgress[bin.name]);
   const toast = useApp((s) => s.toast);
   const refresh = useApp((s) => s.refreshBinaries);
+  const t = useT();
   const [versions, setVersions] = useState<string[] | null>(null);
   const busy = progress && (progress.phase === "downloading" || progress.phase === "extracting");
 
   const install = async (version?: string) => {
     try {
       if (version) {
-        toast({ title: `Installing ${bin.name} ${version}…`, variant: "default" });
+        toast({
+          title: t("c.installingVersion", { name: bin.name, v: version }),
+          variant: "default",
+        });
       }
       await api.installBinary(bin.name, version);
     } catch (e) {
-      toast({ title: `Failed to update ${bin.name}`, description: String(e), variant: "error" });
+      toast({
+        title: t("c.updateFailed", { name: bin.name }),
+        description: String(e),
+        variant: "error",
+      });
     }
   };
 
@@ -56,7 +65,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
       setVersions(await api.listBinaryVersions(bin.name));
     } catch (e) {
       toast({
-        title: `Could not list ${bin.name} versions`,
+        title: t("c.listFailed", { name: bin.name }),
         description: String(e),
         variant: "error",
       });
@@ -67,14 +76,14 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
     try {
       await api.rollbackBinary(bin.name);
       toast({
-        title: `${bin.name} switched to ${bin.previousVersion}`,
-        description: "Run it again to switch back.",
+        title: t("c.switchedTo", { name: bin.name, v: bin.previousVersion ?? "" }),
+        description: t("c.switchBack"),
         variant: "success",
       });
       await refresh(true);
     } catch (e) {
       toast({
-        title: `Failed to roll back ${bin.name}`,
+        title: t("c.rollbackFailed", { name: bin.name }),
         description: String(e),
         variant: "error",
       });
@@ -95,16 +104,16 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 {bin.installed ? (
                   bin.updateAvailable ? (
                     <Badge className="gap-1">
-                      <ArrowUpCircle className="h-3 w-3" /> Update available
+                      <ArrowUpCircle className="h-3 w-3" /> {t("c.updateAvailable")}
                     </Badge>
                   ) : (
                     <Badge variant="success" className="gap-1">
-                      <CheckCircle2 className="h-3 w-3" /> Up to date
+                      <CheckCircle2 className="h-3 w-3" /> {t("c.upToDate")}
                     </Badge>
                   )
                 ) : (
                   <Badge variant="destructive" className="gap-1">
-                    <XCircle className="h-3 w-3" /> Not installed
+                    <XCircle className="h-3 w-3" /> {t("c.notInstalled")}
                   </Badge>
                 )}
               </div>
@@ -121,11 +130,11 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
             {homebrewOnly ? (
               !bin.installed && (
                 <div className="max-w-52 rounded-lg border px-3 py-2 text-right text-xs text-muted-foreground">
-                  Install with Homebrew:
+                  {t("c.homebrew1")}
                   <div className="mt-0.5 select-text font-mono text-foreground">
                     brew install ffmpeg
                   </div>
-                  MediaFetch picks it up automatically.
+                  {t("c.homebrew2")}
                 </div>
               )
             ) : bin.installed && !bin.updateAvailable ? null : (
@@ -135,12 +144,12 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 ) : (
                   <Download className="h-3.5 w-3.5" />
                 )}
-                {bin.installed ? "Update" : "Install"}
+                {bin.installed ? t("c.update") : t("c.install")}
               </Button>
             )}
             {bin.previousVersion && bin.previousVersion !== bin.currentVersion && (
               <Button size="sm" variant="outline" onClick={rollback} disabled={!!busy}>
-                <Undo2 className="h-3.5 w-3.5" /> Roll back
+                <Undo2 className="h-3.5 w-3.5" /> {t("c.rollback")}
               </Button>
             )}
             {!homebrewOnly && (
@@ -153,12 +162,12 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
               disabled={!!busy}
             >
               <SelectTrigger className="h-8 w-44 text-xs">
-                <SelectValue placeholder="Install other version…" />
+                <SelectValue placeholder={t("c.otherVersion")} />
               </SelectTrigger>
               <SelectContent>
                 {versions === null && (
                   <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" /> Loading releases…
+                    <Loader2 className="h-3 w-3 animate-spin" /> {t("c.loadingReleases")}
                   </div>
                 )}
                 {versions?.map((v) => (
@@ -166,14 +175,14 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                     {v}
                     {v === bin.currentVersion || v === bin.latestVersion
                       ? v === bin.currentVersion
-                        ? "  (installed)"
-                        : "  (latest)"
+                        ? `  ${t("c.installed")}`
+                        : `  ${t("c.latest")}`
                       : ""}
                   </SelectItem>
                 ))}
                 {versions?.length === 0 && (
                   <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                    No releases found
+                    {t("c.noReleases")}
                   </div>
                 )}
               </SelectContent>
@@ -190,18 +199,18 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
           }
         >
           <div className="rounded-lg bg-secondary/50 px-3 py-2">
-            <div className="text-xs text-muted-foreground">Installed version</div>
+            <div className="text-xs text-muted-foreground">{t("c.installedVersion")}</div>
             <div className="font-mono font-medium">
               {bin.currentVersion ?? "—"}
             </div>
           </div>
           <div className="rounded-lg bg-secondary/50 px-3 py-2">
-            <div className="text-xs text-muted-foreground">Latest release</div>
-            <div className="font-mono font-medium">{bin.latestVersion ?? "checking…"}</div>
+            <div className="text-xs text-muted-foreground">{t("c.latestRelease")}</div>
+            <div className="font-mono font-medium">{bin.latestVersion ?? "…"}</div>
           </div>
           {bin.previousVersion && (
             <div className="rounded-lg bg-secondary/50 px-3 py-2">
-              <div className="text-xs text-muted-foreground">Rollback version</div>
+              <div className="text-xs text-muted-foreground">{t("c.rollbackVersion")}</div>
               <div className="font-mono font-medium">{bin.previousVersion}</div>
             </div>
           )}
@@ -216,8 +225,8 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
             />
             <div className="mt-1 text-xs text-muted-foreground">
               {progress.phase === "extracting"
-                ? "Extracting…"
-                : `Downloading ${formatBytes(progress.downloaded)}${
+                ? t("c.extracting")
+                : `${t("c.downloading")} ${formatBytes(progress.downloaded)}${
                     progress.total > 0 ? ` / ${formatBytes(progress.total)}` : ""
                   }`}
             </div>
@@ -237,6 +246,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
 function AppUpdateCard() {
   const appUpdate = useApp((s) => s.appUpdate);
   const toast = useApp((s) => s.toast);
+  const t = useT();
   const [installing, setInstalling] = useState(false);
   const [updateProgress, setUpdateProgress] = useState<{
     downloaded: number;
@@ -250,8 +260,8 @@ function AppUpdateCard() {
       const update = await checkUpdater();
       if (!update) {
         toast({
-          title: "No update found",
-          description: "You are already on the latest version.",
+          title: t("c.noUpdate"),
+          description: t("c.alreadyLatest"),
           variant: "default",
         });
         return;
@@ -271,8 +281,8 @@ function AppUpdateCard() {
       await relaunch();
     } catch (e) {
       toast({
-        title: "Self-update failed",
-        description: `${String(e)} — opening the releases page instead.`,
+        title: t("c.selfUpdateFailed"),
+        description: t("c.openingReleases", { e: String(e) }),
         variant: "error",
       });
       void api.openExternal(appUpdate.releasesUrl);
@@ -295,11 +305,11 @@ function AppUpdateCard() {
                 <span className="font-semibold">MediaFetch</span>
                 {appUpdate.updateAvailable ? (
                   <Badge className="gap-1">
-                    <ArrowUpCircle className="h-3 w-3" /> Update available
+                    <ArrowUpCircle className="h-3 w-3" /> {t("c.updateAvailable")}
                   </Badge>
                 ) : (
                   <Badge variant="success" className="gap-1">
-                    <CheckCircle2 className="h-3 w-3" /> Up to date
+                    <CheckCircle2 className="h-3 w-3" /> {t("c.upToDate")}
                   </Badge>
                 )}
               </div>
@@ -319,18 +329,18 @@ function AppUpdateCard() {
               ) : (
                 <Download className="h-3.5 w-3.5" />
               )}
-              Install update
+              {t("c.installUpdate")}
             </Button>
           )}
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
           <div className="rounded-lg bg-secondary/50 px-3 py-2">
-            <div className="text-xs text-muted-foreground">Installed version</div>
+            <div className="text-xs text-muted-foreground">{t("c.installedVersion")}</div>
             <div className="font-mono font-medium">v{appUpdate.currentVersion}</div>
           </div>
           <div className="rounded-lg bg-secondary/50 px-3 py-2">
-            <div className="text-xs text-muted-foreground">Latest release</div>
+            <div className="text-xs text-muted-foreground">{t("c.latestRelease")}</div>
             <div className="font-mono font-medium">
               {appUpdate.latestVersion ? `v${appUpdate.latestVersion}` : "—"}
             </div>
@@ -347,7 +357,7 @@ function AppUpdateCard() {
               }
             />
             <div className="mt-1 text-xs text-muted-foreground">
-              Downloading {formatBytes(updateProgress.downloaded)}
+              {t("c.downloading")} {formatBytes(updateProgress.downloaded)}
               {updateProgress.total > 0 ? ` / ${formatBytes(updateProgress.total)}` : ""}
             </div>
           </div>
@@ -362,15 +372,14 @@ export function BinariesPage() {
   const loading = useApp((s) => s.binariesLoading);
   const refresh = useApp((s) => s.refreshBinaries);
   const checkAppUpdate = useApp((s) => s.checkAppUpdate);
+  const t = useT();
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">Components</h1>
-          <p className="text-sm text-muted-foreground">
-            MediaFetch is powered by yt-dlp and FFmpeg. Manage their versions here.
-          </p>
+          <h1 className="text-xl font-bold">{t("c.title")}</h1>
+          <p className="text-sm text-muted-foreground">{t("c.subtitle")}</p>
         </div>
         <Button
           variant="outline"
@@ -382,7 +391,7 @@ export function BinariesPage() {
           disabled={loading}
         >
           <RefreshCw className={loading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-          Check for updates
+          {t("c.checkUpdates")}
         </Button>
       </div>
 
@@ -393,7 +402,7 @@ export function BinariesPage() {
         ))}
         {binaries.length === 0 && (
           <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed py-14 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" /> Checking components…
+            <Loader2 className="h-4 w-4 animate-spin" /> {t("c.checking")}
           </div>
         )}
       </div>

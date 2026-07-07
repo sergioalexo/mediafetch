@@ -14,20 +14,21 @@ import {
 } from "lucide-react";
 import type { DownloadTask } from "@/lib/types";
 import * as api from "@/lib/api";
+import { useT, type MsgKey } from "@/lib/i18n";
 import { cn, formatBytes, formatEta, formatSpeed } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-const STATUS_LABEL: Record<DownloadTask["status"], string> = {
-  queued: "Queued",
-  downloading: "Downloading",
-  postprocessing: "Processing",
-  paused: "Paused",
-  completed: "Completed",
-  failed: "Failed",
-  cancelled: "Cancelled",
+const STATUS_LABEL: Record<DownloadTask["status"], MsgKey> = {
+  queued: "q.status.queued",
+  downloading: "q.status.downloading",
+  postprocessing: "q.status.postprocessing",
+  paused: "q.status.paused",
+  completed: "q.status.completed",
+  failed: "q.status.failed",
+  cancelled: "q.status.cancelled",
 };
 
 function statusBadgeVariant(status: DownloadTask["status"]) {
@@ -76,6 +77,7 @@ export function QueueItem({
   index: number;
   count: number;
 }) {
+  const t = useT();
   const active = task.status === "downloading" || task.status === "postprocessing";
   const finished =
     task.status === "completed" || task.status === "failed" || task.status === "cancelled";
@@ -118,60 +120,61 @@ export function QueueItem({
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                 <Badge variant={statusBadgeVariant(task.status)} className="px-1.5 py-0">
-                  {STATUS_LABEL[task.status]}
+                  {t(STATUS_LABEL[task.status])}
                 </Badge>
                 {task.options.formatNote && <span>{task.options.formatNote}</span>}
                 {task.options.kind === "audio" && task.options.audioFormat && (
                   <span className="uppercase">{task.options.audioFormat}</span>
                 )}
                 {task.playlistCount != null && task.playlistIndex != null && (
-                  <span>
-                    item {task.playlistIndex}/{task.playlistCount}
-                  </span>
+                  <span>{t("q.itemOf", { i: task.playlistIndex, n: task.playlistCount })}</span>
                 )}
               </div>
             </div>
 
             <div className="flex shrink-0 items-center gap-0.5">
               {index > 0 && !finished && task.status !== "downloading" && (
-                <IconButton tip="Move up" onClick={() => api.reorderTask(task.id, index - 1)}>
+                <IconButton tip={t("q.moveUp")} onClick={() => api.reorderTask(task.id, index - 1)}>
                   <ArrowUp className="h-3.5 w-3.5" />
                 </IconButton>
               )}
               {index < count - 1 && !finished && task.status !== "downloading" && (
-                <IconButton tip="Move down" onClick={() => api.reorderTask(task.id, index + 1)}>
+                <IconButton
+                  tip={t("q.moveDown")}
+                  onClick={() => api.reorderTask(task.id, index + 1)}
+                >
                   <ArrowDown className="h-3.5 w-3.5" />
                 </IconButton>
               )}
               {(task.status === "downloading" || task.status === "queued") && (
-                <IconButton tip="Pause" onClick={() => api.pauseTask(task.id)}>
+                <IconButton tip={t("q.pause")} onClick={() => api.pauseTask(task.id)}>
                   <Pause className="h-3.5 w-3.5" />
                 </IconButton>
               )}
               {task.status === "paused" && (
-                <IconButton tip="Resume" onClick={() => api.resumeTask(task.id)}>
+                <IconButton tip={t("q.resume")} onClick={() => api.resumeTask(task.id)}>
                   <Play className="h-3.5 w-3.5" />
                 </IconButton>
               )}
               {(task.status === "failed" || task.status === "cancelled") && (
-                <IconButton tip="Retry" onClick={() => api.retryTask(task.id)}>
+                <IconButton tip={t("q.retry")} onClick={() => api.retryTask(task.id)}>
                   <RotateCcw className="h-3.5 w-3.5" />
                 </IconButton>
               )}
               {task.status === "completed" && task.filename && (
                 <IconButton
-                  tip="Show in folder"
+                  tip={t("q.showInFolder")}
                   onClick={() => api.showInFolder(task.filename!)}
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
                 </IconButton>
               )}
               {!finished ? (
-                <IconButton tip="Cancel" onClick={() => api.cancelTask(task.id)}>
+                <IconButton tip={t("q.cancel")} onClick={() => api.cancelTask(task.id)}>
                   <X className="h-3.5 w-3.5" />
                 </IconButton>
               ) : (
-                <IconButton tip="Remove" onClick={() => api.removeTask(task.id)}>
+                <IconButton tip={t("q.remove")} onClick={() => api.removeTask(task.id)}>
                   <Trash2 className="h-3.5 w-3.5" />
                 </IconButton>
               )}

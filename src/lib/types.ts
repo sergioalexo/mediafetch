@@ -92,6 +92,7 @@ export interface Settings {
   audioBitrateMode: BitrateMode;
   /** The user confirmed the legal disclaimer on first launch. */
   disclaimerAccepted: boolean;
+  language: "en" | "uk" | "ru";
 }
 
 // ---- URL analysis ----
