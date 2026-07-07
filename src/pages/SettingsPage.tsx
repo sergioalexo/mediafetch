@@ -1,16 +1,23 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
+  AudioLines,
   Cookie,
+  Film,
   FolderOpen,
   Gauge,
   Globe,
+  Layers,
+  Pencil,
+  Plus,
   ScrollText,
   Shield,
   SlidersHorizontal,
 } from "lucide-react";
-import type { Settings } from "@/lib/types";
+import type { Preset, Settings } from "@/lib/types";
 import { useApp } from "@/lib/store";
 import { LANGUAGES, useT, type MsgKey } from "@/lib/i18n";
+import { presetSummary } from "@/lib/presets";
+import { PresetDialog } from "@/components/PresetDialog";
 import * as api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,6 +69,8 @@ export function SettingsPage() {
   const toast = useApp((s) => s.toast);
   const setShowDisclaimer = useApp((s) => s.setShowDisclaimer);
   const t = useT();
+  const [editPreset, setEditPreset] = useState<Preset | null>(null);
+  const [presetDialog, setPresetDialog] = useState(false);
 
   if (!settings) return null;
   const set = (patch: Partial<Settings>) => void updateSettings(patch);
@@ -143,6 +152,71 @@ export function SettingsPage() {
               onCheckedChange={(v) => set({ notifications: v })}
             />
           </Row>
+        </CardContent>
+      </Card>
+
+      {/* Presets */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center justify-between text-sm">
+            <span className="flex items-center gap-2">
+              <Layers className="h-4 w-4 text-primary" /> {t("set.presets")}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setEditPreset(null);
+                setPresetDialog(true);
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" /> {t("set.newPreset")}
+            </Button>
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">{t("set.presetsHint")}</p>
+        </CardHeader>
+        <CardContent className="space-y-1.5">
+          {settings.presets.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm"
+            >
+              {p.kind === "audio" ? (
+                <AudioLines className="h-4 w-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <Film className="h-4 w-4 shrink-0 text-muted-foreground" />
+              )}
+              <span className="font-medium">{p.name}</span>
+              <span className="text-xs text-muted-foreground">{presetSummary(p, t)}</span>
+              {settings.defaultPresetId === p.id && (
+                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  {t("set.defaultPreset")}
+                </span>
+              )}
+              <div className="ml-auto flex items-center gap-1">
+                {settings.defaultPresetId !== p.id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => set({ defaultPresetId: p.id })}
+                  >
+                    {t("set.defaultPreset")}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="iconSm"
+                  onClick={() => {
+                    setEditPreset(p);
+                    setPresetDialog(true);
+                  }}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
         </CardContent>
       </Card>
 
@@ -358,6 +432,8 @@ export function SettingsPage() {
           </Row>
         </CardContent>
       </Card>
+
+      <PresetDialog preset={editPreset} open={presetDialog} onOpenChange={setPresetDialog} />
     </div>
   );
 }

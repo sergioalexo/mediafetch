@@ -2,6 +2,47 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
+/// A named bundle of per-download media parameters the user can pick as default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preset {
+    pub id: String,
+    pub name: String,
+    pub kind: String,         // "video" | "audio"
+    pub video_preset: String, // quality preset value, e.g. "best" | "1080"
+    pub audio_format: String, // "mp3" | "flac" | ...
+    pub bitrate_mode: String, // "cbr" | "vbr"
+    #[serde(default)]
+    pub subtitle_langs: Option<String>,
+    #[serde(default)]
+    pub embed_subs: Option<bool>,
+}
+
+fn default_presets() -> Vec<Preset> {
+    vec![
+        Preset {
+            id: "video-best".into(),
+            name: "Video · Best".into(),
+            kind: "video".into(),
+            video_preset: "best".into(),
+            audio_format: "mp3".into(),
+            bitrate_mode: "cbr".into(),
+            subtitle_langs: None,
+            embed_subs: None,
+        },
+        Preset {
+            id: "audio-mp3".into(),
+            name: "Audio · MP3".into(),
+            kind: "audio".into(),
+            video_preset: "best".into(),
+            audio_format: "mp3".into(),
+            bitrate_mode: "cbr".into(),
+            subtitle_langs: None,
+            embed_subs: None,
+        },
+    ]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -23,11 +64,9 @@ pub struct Settings {
     pub notifications: bool,
     pub concurrent_fragments: u32,
     pub theme: String,
-    // Last used selections on the Downloads page, restored on start.
-    pub last_kind: String,          // "video" | "audio"
-    pub last_preset: String,        // quality preset value, e.g. "best" | "1080"
-    pub last_audio_format: String,  // "mp3" | "flac" | ...
-    pub audio_bitrate_mode: String, // "cbr" | "vbr"
+    // Named per-download presets and the one selected as default.
+    pub presets: Vec<Preset>,
+    pub default_preset_id: String,
     // The user confirmed the legal disclaimer on first launch.
     pub disclaimer_accepted: bool,
     pub language: String, // "en" | "uk" | "ru"
@@ -54,10 +93,8 @@ impl Default for Settings {
             notifications: true,
             concurrent_fragments: 4,
             theme: "dark".into(),
-            last_kind: "video".into(),
-            last_preset: "best".into(),
-            last_audio_format: "mp3".into(),
-            audio_bitrate_mode: "cbr".into(),
+            presets: default_presets(),
+            default_preset_id: "video-best".into(),
             disclaimer_accepted: false,
             language: "en".into(),
         }
@@ -83,6 +120,13 @@ pub fn load(app: &AppHandle) -> Settings {
             .download_dir()
             .unwrap_or_else(|_| PathBuf::from("."));
         settings.download_dir = base.join("MediaFetch").to_string_lossy().into_owned();
+    }
+    // Settings files written before presets existed load with an empty list.
+    if settings.presets.is_empty() {
+        settings.presets = default_presets();
+    }
+    if !settings.presets.iter().any(|p| p.id == settings.default_preset_id) {
+        settings.default_preset_id = settings.presets[0].id.clone();
     }
     settings
 }

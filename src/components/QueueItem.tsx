@@ -72,10 +72,12 @@ export function QueueItem({
   task,
   index,
   count,
+  compact = false,
 }: {
   task: DownloadTask;
   index: number;
   count: number;
+  compact?: boolean;
 }) {
   const t = useT();
   const active = task.status === "downloading" || task.status === "postprocessing";
@@ -90,20 +92,29 @@ export function QueueItem({
       exit={{ opacity: 0, scale: 0.97 }}
       transition={{ type: "spring", stiffness: 500, damping: 40 }}
       className={cn(
-        "rounded-xl border bg-card p-3 shadow-sm",
+        "rounded-xl border bg-card shadow-sm",
+        compact ? "p-2" : "p-3",
         active && "border-primary/30"
       )}
     >
-      <div className="flex gap-3">
+      <div className={cn("flex", compact ? "gap-2.5" : "gap-3")}>
         {task.thumbnail ? (
           <img
             src={task.thumbnail}
             alt=""
-            className="h-16 w-28 shrink-0 rounded-md object-cover"
+            className={cn(
+              "shrink-0 rounded-md object-cover",
+              compact ? "h-12 w-20" : "h-16 w-28"
+            )}
             draggable={false}
           />
         ) : (
-          <div className="flex h-16 w-28 shrink-0 items-center justify-center rounded-md bg-secondary">
+          <div
+            className={cn(
+              "flex shrink-0 items-center justify-center rounded-md bg-secondary",
+              compact ? "h-12 w-20" : "h-16 w-28"
+            )}
+          >
             {task.options.kind === "audio" ? (
               <Music className="h-6 w-6 text-muted-foreground" />
             ) : (

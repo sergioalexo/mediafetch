@@ -43,6 +43,21 @@ export interface DownloadOptions {
   /** Known in advance from analysis — used for queue display. */
   title?: string | null;
   thumbnail?: string | null;
+  /** Shared id for tasks from the same analyzed playlist (collapsible group). */
+  groupId?: string | null;
+  groupTitle?: string | null;
+}
+
+export interface Preset {
+  id: string;
+  name: string;
+  kind: DownloadKind;
+  /** quality preset value, e.g. "best" | "1080" */
+  videoPreset: string;
+  audioFormat: AudioFormat;
+  bitrateMode: BitrateMode;
+  subtitleLangs?: string | null;
+  embedSubs?: boolean | null;
 }
 
 export interface DownloadTask {
@@ -85,11 +100,8 @@ export interface Settings {
   notifications: boolean;
   concurrentFragments: number;
   theme: "dark" | "light";
-  // Last used selections on the Downloads page, restored on start.
-  lastKind: DownloadKind;
-  lastPreset: string;
-  lastAudioFormat: AudioFormat;
-  audioBitrateMode: BitrateMode;
+  presets: Preset[];
+  defaultPresetId: string;
   /** The user confirmed the legal disclaimer on first launch. */
   disclaimerAccepted: boolean;
   language: "en" | "uk" | "ru";

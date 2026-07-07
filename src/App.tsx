@@ -5,16 +5,14 @@ import { Sidebar } from "@/components/Sidebar";
 import { Toaster } from "@/components/Toaster";
 import { DisclaimerDialog } from "@/components/DisclaimerDialog";
 import { useApp } from "@/lib/store";
-import { DownloadsPage } from "@/pages/DownloadsPage";
-import { QueuePage } from "@/pages/QueuePage";
+import { WorkspacePage } from "@/pages/WorkspacePage";
 import { HistoryPage } from "@/pages/HistoryPage";
 import { StatsPage } from "@/pages/StatsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { BinariesPage } from "@/pages/BinariesPage";
 
 const PAGES = {
-  downloads: DownloadsPage,
-  queue: QueuePage,
+  downloads: WorkspacePage,
   history: HistoryPage,
   stats: StatsPage,
   settings: SettingsPage,

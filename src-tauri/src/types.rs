@@ -54,6 +54,12 @@ pub struct DownloadOptions {
     pub title: Option<String>,
     #[serde(default)]
     pub thumbnail: Option<String>,
+    /// Shared id for tasks that came from the same analyzed playlist,
+    /// so the UI can group them under one collapsible header.
+    #[serde(default)]
+    pub group_id: Option<String>,
+    #[serde(default)]
+    pub group_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

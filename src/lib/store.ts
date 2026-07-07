@@ -1,17 +1,39 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AnalyzeResult,
   AppUpdateStatus,
   BinaryProgress,
   BinaryStatus,
+  DownloadOptions,
   DownloadTask,
   HistoryEntry,
+  Preset,
   Settings,
 } from "./types";
 import * as api from "./api";
-import { translate } from "./i18n";
+import { translate, type MsgKey } from "./i18n";
+import { isAlreadyDownloaded, optionsFromPreset, sourceAbrOf } from "./presets";
+import { extractUrls } from "./utils";
 
-export type Page = "downloads" | "queue" | "history" | "stats" | "settings" | "binaries";
+export type Page = "downloads" | "history" | "stats" | "settings" | "binaries";
+
+/** A pasted link staged in the Workspace: analyzed but not yet downloading. */
+export interface Draft {
+  id: string;
+  url: string;
+  presetId: string;
+  status: "analyzing" | "ready" | "error";
+  result?: AnalyzeResult | null;
+  error?: string | null;
+  /** Selected playlist entry indices (only for playlist results). */
+  selected: number[];
+  collapsed: boolean;
+  addedAt: number;
+}
+
+let draftSeq = 0;
+const ANALYZE_LIMIT = 3;
 
 interface SpeedSample {
   t: number; // epoch ms
@@ -36,6 +58,23 @@ interface AppState {
   queue: DownloadTask[];
   history: HistoryEntry[];
   speedSamples: SpeedSample[];
+
+  // Workspace staging (session-only, cleared on app restart).
+  drafts: Draft[];
+  addUrls: (text: string) => void;
+  setDraftPreset: (id: string, presetId: string) => void;
+  toggleDraftEntry: (id: string, index: number) => void;
+  setDraftEntriesAll: (id: string, selected: boolean) => void;
+  toggleDraftCollapsed: (id: string) => void;
+  removeDraft: (id: string) => void;
+  downloadDraft: (id: string) => Promise<void>;
+  downloadAllDrafts: () => Promise<void>;
+  downloadNextDraft: () => Promise<void>;
+
+  // Preset helpers (presets live in settings).
+  activePreset: () => Preset | null;
+  presetById: (id: string) => Preset | null;
+  setDefaultPreset: (id: string) => Promise<void>;
 
   binaries: BinaryStatus[];
   binaryProgress: Record<string, BinaryProgress>;
@@ -80,6 +119,94 @@ export const useApp = create<AppState>((set, get) => ({
   queue: [],
   history: [],
   speedSamples: [],
+
+  drafts: [],
+  addUrls: (text) => {
+    const urls = extractUrls(text);
+    const existing = new Set(get().drafts.map((d) => d.url));
+    const fresh: Draft[] = urls
+      .filter((u) => !existing.has(u))
+      .map((url) => ({
+        id: `d${++draftSeq}`,
+        url,
+        presetId: get().settings?.defaultPresetId ?? "",
+        status: "analyzing",
+        result: null,
+        selected: [],
+        collapsed: false,
+        addedAt: Date.now(),
+      }));
+    if (fresh.length === 0) return;
+    set((s) => ({ drafts: [...s.drafts, ...fresh] }));
+    for (const d of fresh) scheduleAnalyze(get, set, d.id);
+  },
+  setDraftPreset: (id, presetId) =>
+    set((s) => ({
+      drafts: s.drafts.map((d) => (d.id === id ? { ...d, presetId } : d)),
+    })),
+  toggleDraftEntry: (id, index) =>
+    set((s) => ({
+      drafts: s.drafts.map((d) => {
+        if (d.id !== id) return d;
+        const has = d.selected.includes(index);
+        return {
+          ...d,
+          selected: has
+            ? d.selected.filter((i) => i !== index)
+            : [...d.selected, index],
+        };
+      }),
+    })),
+  setDraftEntriesAll: (id, selected) =>
+    set((s) => ({
+      drafts: s.drafts.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              selected:
+                selected && d.result?.kind === "playlist"
+                  ? d.result.entries.map((_, i) => i)
+                  : [],
+            }
+          : d
+      ),
+    })),
+  toggleDraftCollapsed: (id) =>
+    set((s) => ({
+      drafts: s.drafts.map((d) => (d.id === id ? { ...d, collapsed: !d.collapsed } : d)),
+    })),
+  removeDraft: (id) => set((s) => ({ drafts: s.drafts.filter((d) => d.id !== id) })),
+  downloadDraft: async (id) => {
+    const draft = get().drafts.find((d) => d.id === id);
+    if (!draft || draft.status !== "ready" || !draft.result) return;
+    const items = buildDraftItems(get, draft);
+    if (items.length === 0) return;
+    await api.enqueue(items);
+    set((s) => ({ drafts: s.drafts.filter((d) => d.id !== id) }));
+    get().setPage("downloads");
+  },
+  downloadAllDrafts: async () => {
+    const ready = get().drafts.filter((d) => d.status === "ready" && d.result);
+    const items = ready.flatMap((d) => buildDraftItems(get, d));
+    if (items.length === 0) return;
+    await api.enqueue(items);
+    const ids = new Set(ready.map((d) => d.id));
+    set((s) => ({ drafts: s.drafts.filter((d) => !ids.has(d.id)) }));
+  },
+  downloadNextDraft: async () => {
+    const next = get().drafts.find((d) => d.status === "ready" && d.result);
+    if (next) await get().downloadDraft(next.id);
+  },
+
+  activePreset: () => {
+    const s = get().settings;
+    if (!s) return null;
+    return s.presets.find((p) => p.id === s.defaultPresetId) ?? s.presets[0] ?? null;
+  },
+  presetById: (id) => get().settings?.presets.find((p) => p.id === id) ?? null,
+  setDefaultPreset: async (id) => {
+    await get().updateSettings({ defaultPresetId: id });
+  },
 
   binaries: [],
   binaryProgress: {},
@@ -177,6 +304,100 @@ export const useApp = create<AppState>((set, get) => ({
 
 function applyTheme(theme: "dark" | "light") {
   document.documentElement.classList.toggle("dark", theme === "dark");
+}
+
+// ---- Draft analysis (concurrency-limited) & item building ----
+
+type Get = () => AppState;
+type SetState = (
+  partial:
+    | AppState
+    | Partial<AppState>
+    | ((s: AppState) => AppState | Partial<AppState>)
+) => void;
+
+let analyzing = 0;
+const pendingAnalyze: string[] = [];
+
+function scheduleAnalyze(get: Get, set: SetState, id: string) {
+  pendingAnalyze.push(id);
+  pumpAnalyze(get, set);
+}
+
+function pumpAnalyze(get: Get, set: SetState) {
+  while (analyzing < ANALYZE_LIMIT && pendingAnalyze.length > 0) {
+    const id = pendingAnalyze.shift()!;
+    if (!get().drafts.some((d) => d.id === id)) continue;
+    analyzing++;
+    void runAnalyze(get, set, id).finally(() => {
+      analyzing--;
+      pumpAnalyze(get, set);
+    });
+  }
+}
+
+async function runAnalyze(get: Get, set: SetState, id: string) {
+  const draft = get().drafts.find((d) => d.id === id);
+  if (!draft) return;
+  try {
+    const r = await api.analyzeUrl(draft.url);
+    set((s) => ({
+      drafts: s.drafts.map((d) => {
+        if (d.id !== id) return d;
+        // Pre-select playlist tracks that are not already in the history.
+        const selected =
+          r.kind === "playlist"
+            ? r.entries
+                .map((_, i) => i)
+                .filter(
+                  (i) => !isAlreadyDownloaded(s.history, r.entries[i].url, r.entries[i].id)
+                )
+            : [];
+        return { ...d, status: "ready" as const, result: r, selected };
+      }),
+    }));
+  } catch (e) {
+    set((s) => ({
+      drafts: s.drafts.map((d) =>
+        d.id === id ? { ...d, status: "error" as const, error: String(e) } : d
+      ),
+    }));
+  }
+}
+
+function buildDraftItems(get: Get, draft: Draft): DownloadOptions[] {
+  const s = get().settings;
+  if (!s || !draft.result) return [];
+  const preset =
+    s.presets.find((p) => p.id === draft.presetId) ??
+    s.presets.find((p) => p.id === s.defaultPresetId) ??
+    s.presets[0];
+  if (!preset) return [];
+  const lang = s.language ?? "en";
+  const t = (k: MsgKey) => translate(lang, k);
+  const r = draft.result;
+
+  if (r.kind === "playlist") {
+    const groupId = `${draft.id}-${draft.addedAt}`;
+    return [...draft.selected]
+      .sort((a, b) => a - b)
+      .map((i) => r.entries[i])
+      .filter((e) => !!e && !!e.url)
+      .map((e) =>
+        optionsFromPreset(
+          preset,
+          { url: e.url, title: e.title, thumbnail: e.thumbnail, groupId, groupTitle: r.title },
+          t
+        )
+      );
+  }
+  return [
+    optionsFromPreset(
+      preset,
+      { url: r.url, title: r.title, thumbnail: r.thumbnail, sourceAbr: sourceAbrOf(r) },
+      t
+    ),
+  ];
 }
 
 // Convenient selectors

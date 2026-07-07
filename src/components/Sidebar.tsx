@@ -1,14 +1,5 @@
 import { motion } from "framer-motion";
-import {
-  Download,
-  History,
-  ListOrdered,
-  Moon,
-  Package,
-  BarChart3,
-  Settings,
-  Sun,
-} from "lucide-react";
+import { Download, History, Moon, Package, BarChart3, Settings, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
 import { useApp, type Page } from "@/lib/store";
@@ -19,7 +10,6 @@ import logoWhite from "@/assets/logo-sergioalexo-white.svg";
 
 const NAV: { page: Page; label: MsgKey; icon: typeof Download }[] = [
   { page: "downloads", label: "nav.download", icon: Download },
-  { page: "queue", label: "nav.queue", icon: ListOrdered },
   { page: "history", label: "nav.history", icon: History },
   { page: "stats", label: "nav.stats", icon: BarChart3 },
   { page: "binaries", label: "nav.components", icon: Package },
@@ -101,7 +91,7 @@ export function Sidebar() {
               )}
               <Icon className="relative z-10 h-4 w-4" />
               <span className="relative z-10 flex-1 text-left font-medium">{t(label)}</span>
-              {p === "queue" && activeCount > 0 && (
+              {p === "downloads" && activeCount > 0 && (
                 <Badge className="relative z-10 h-5 min-w-5 justify-center px-1.5">
                   {activeCount}
                 </Badge>
