@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   ArrowDown,
   ArrowUp,
+  Bug,
   FolderOpen,
   Music,
   Pause,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import type { DownloadTask } from "@/lib/types";
 import * as api from "@/lib/api";
+import { openIssueReport } from "@/lib/report";
 import { useT, type MsgKey } from "@/lib/i18n";
 import { cn, formatBytes, formatEta, formatSpeed } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -170,6 +172,19 @@ export function QueueItem({
               {(task.status === "failed" || task.status === "cancelled") && (
                 <IconButton tip={t("q.retry")} onClick={() => api.retryTask(task.id)}>
                   <RotateCcw className="h-3.5 w-3.5" />
+                </IconButton>
+              )}
+              {task.status === "failed" && (
+                <IconButton
+                  tip={t("q.report")}
+                  onClick={() =>
+                    void openIssueReport("bug", {
+                      url: task.url,
+                      error: task.error ?? undefined,
+                    })
+                  }
+                >
+                  <Bug className="h-3.5 w-3.5" />
                 </IconButton>
               )}
               {task.status === "completed" && task.filename && (

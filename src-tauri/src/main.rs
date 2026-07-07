@@ -326,6 +326,31 @@ async fn check_app_update(app: AppHandle, state: State<'_, AppState>) -> Result<
     })
 }
 
+// ---------- Diagnostics / issue reporting ----------
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Diagnostics {
+    app_version: String,
+    os: String,
+    arch: String,
+    ytdlp_version: Option<String>,
+    ffmpeg_version: Option<String>,
+}
+
+/// Snapshot of the local environment for a bug report. Deliberately limited to
+/// non-identifying info (versions, OS, CPU arch) — never paths, cookies or URLs.
+#[tauri::command]
+fn collect_diagnostics(app: AppHandle) -> Diagnostics {
+    Diagnostics {
+        app_version: app.package_info().version.to_string(),
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        ytdlp_version: binaries::tool_version(&app, binaries::YTDLP),
+        ffmpeg_version: binaries::tool_version(&app, binaries::FFMPEG),
+    }
+}
+
 // ---------- Binaries module ----------
 
 #[tauri::command]
@@ -394,7 +419,8 @@ fn main() {
             install_binary,
             rollback_binary,
             list_binary_versions,
-            check_app_update
+            check_app_update,
+            collect_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("error while running MediaFetch");

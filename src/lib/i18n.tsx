@@ -88,6 +88,7 @@ const en = {
   "q.pause": "Pause",
   "q.resume": "Resume",
   "q.retry": "Retry",
+  "q.report": "Report issue",
   "q.showInFolder": "Show in folder",
   "q.cancel": "Cancel",
   "q.remove": "Remove",
@@ -212,6 +213,14 @@ const en = {
   "set.disclaimerHint":
     "Educational use only — you are responsible for complying with platform terms and copyright law",
   "set.view": "View",
+  "set.help": "Help & feedback",
+  "set.reportIssue": "Report an issue",
+  "set.reportIssueHint": "Something glitched or isn't working right",
+  "set.report": "Report",
+  "set.suggest": "Suggest an improvement",
+  "set.suggestHint": "Share an idea to make MediaFetch better",
+  "set.suggestBtn": "Suggest",
+  "set.version": "Version",
 
   // Disclaimer dialog
   "d.title": "Disclaimer & Terms of Use",
@@ -384,6 +393,7 @@ const uk: Record<MsgKey, string> = {
   "q.pause": "Пауза",
   "q.resume": "Продовжити",
   "q.retry": "Повторити",
+  "q.report": "Повідомити про проблему",
   "q.showInFolder": "Показати в папці",
   "q.cancel": "Скасувати",
   "q.remove": "Видалити",
@@ -504,6 +514,14 @@ const uk: Record<MsgKey, string> = {
   "set.disclaimerHint":
     "Лише для освітніх цілей — ви відповідаєте за дотримання умов платформ і авторського права",
   "set.view": "Переглянути",
+  "set.help": "Довідка та відгуки",
+  "set.reportIssue": "Повідомити про проблему",
+  "set.reportIssueHint": "Щось збоїть або працює неправильно",
+  "set.report": "Повідомити",
+  "set.suggest": "Запропонувати покращення",
+  "set.suggestHint": "Поділіться ідеєю, як зробити MediaFetch кращим",
+  "set.suggestBtn": "Запропонувати",
+  "set.version": "Версія",
 
   "d.title": "Застереження та умови використання",
   "d.subtitle": "Будь ласка, уважно прочитайте перед використанням MediaFetch.",
@@ -668,6 +686,7 @@ const ru: Record<MsgKey, string> = {
   "q.pause": "Пауза",
   "q.resume": "Продолжить",
   "q.retry": "Повторить",
+  "q.report": "Сообщить о проблеме",
   "q.showInFolder": "Показать в папке",
   "q.cancel": "Отменить",
   "q.remove": "Удалить",
@@ -788,6 +807,14 @@ const ru: Record<MsgKey, string> = {
   "set.disclaimerHint":
     "Только для образовательных целей — вы отвечаете за соблюдение условий платформ и авторского права",
   "set.view": "Просмотр",
+  "set.help": "Помощь и отзывы",
+  "set.reportIssue": "Сообщить о проблеме",
+  "set.reportIssueHint": "Что-то сбоит или работает неправильно",
+  "set.report": "Сообщить",
+  "set.suggest": "Предложить улучшение",
+  "set.suggestHint": "Поделитесь идеей, как сделать MediaFetch лучше",
+  "set.suggestBtn": "Предложить",
+  "set.version": "Версия",
 
   "d.title": "Отказ от ответственности и условия использования",
   "d.subtitle": "Пожалуйста, внимательно прочитайте перед использованием MediaFetch.",

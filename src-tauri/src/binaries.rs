@@ -214,6 +214,14 @@ fn ffmpeg_installed_tag(app: &AppHandle) -> Option<String> {
     std::fs::read_to_string(tag_file).ok().map(|s| s.trim().to_string())
 }
 
+/// First line of `<tool> --version` (or `-version` for ffmpeg), if the tool is
+/// resolvable. Used for the diagnostics block in issue reports.
+pub fn tool_version(app: &AppHandle, name: &str) -> Option<String> {
+    let (path, _) = resolve(app, name)?;
+    let arg = if name == FFMPEG { "-version" } else { "--version" };
+    run_version(&path, arg)
+}
+
 /// The proxy configured in the app settings ("" when unset).
 fn app_proxy(app: &AppHandle) -> String {
     let state = app.state::<crate::downloader::AppState>();

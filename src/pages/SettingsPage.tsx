@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import {
   AudioLines,
+  Bug,
   Cookie,
   Film,
   FolderOpen,
@@ -8,6 +9,8 @@ import {
   Globe,
   Info,
   Layers,
+  Lightbulb,
+  LifeBuoy,
   Pencil,
   Plus,
   ScrollText,
@@ -16,6 +19,7 @@ import {
 } from "lucide-react";
 import type { Preset, Settings } from "@/lib/types";
 import { useApp } from "@/lib/store";
+import { openIssueReport } from "@/lib/report";
 import { LANGUAGES, useT, type MsgKey } from "@/lib/i18n";
 import { presetSummary, SERVICES } from "@/lib/presets";
 import { PresetDialog } from "@/components/PresetDialog";
@@ -76,6 +80,7 @@ export function SettingsPage() {
   const updateSettings = useApp((s) => s.updateSettings);
   const toast = useApp((s) => s.toast);
   const setShowDisclaimer = useApp((s) => s.setShowDisclaimer);
+  const appUpdate = useApp((s) => s.appUpdate);
   const t = useT();
   const [editPreset, setEditPreset] = useState<Preset | null>(null);
   const [presetDialog, setPresetDialog] = useState(false);
@@ -484,6 +489,40 @@ export function SettingsPage() {
             <Button variant="outline" size="sm" onClick={() => setShowDisclaimer(true)}>
               {t("set.view")}
             </Button>
+          </Row>
+        </CardContent>
+      </Card>
+
+      {/* Help & feedback */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <LifeBuoy className="h-4 w-4 text-primary" /> {t("set.help")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="divide-y divide-border/60">
+          <Row label={t("set.reportIssue")} hint={t("set.reportIssueHint")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void openIssueReport("bug")}
+            >
+              <Bug className="h-3.5 w-3.5" /> {t("set.report")}
+            </Button>
+          </Row>
+          <Row label={t("set.suggest")} hint={t("set.suggestHint")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void openIssueReport("enhancement")}
+            >
+              <Lightbulb className="h-3.5 w-3.5" /> {t("set.suggestBtn")}
+            </Button>
+          </Row>
+          <Row label={t("set.version")}>
+            <span className="font-mono text-xs text-muted-foreground">
+              {appUpdate?.currentVersion ? `v${appUpdate.currentVersion}` : "—"}
+            </span>
           </Row>
         </CardContent>
       </Card>

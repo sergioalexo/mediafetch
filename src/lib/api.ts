@@ -44,6 +44,16 @@ export const openExternal = (url: string) => invoke<void>("open_external", { url
 // ---- App updates ----
 export const checkAppUpdate = () => invoke<AppUpdateStatus>("check_app_update");
 
+// ---- Diagnostics (issue reporting) ----
+export interface Diagnostics {
+  appVersion: string;
+  os: string;
+  arch: string;
+  ytdlpVersion: string | null;
+  ffmpegVersion: string | null;
+}
+export const collectDiagnostics = () => invoke<Diagnostics>("collect_diagnostics");
+
 // ---- Binaries module ----
 export const getBinariesStatus = (checkLatest: boolean) =>
   invoke<BinaryStatus[]>("get_binaries_status", { checkLatest });
