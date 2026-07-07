@@ -211,7 +211,7 @@ const en = {
   "set.legal": "Legal",
   "set.disclaimer": "Disclaimer & terms of use",
   "set.disclaimerHint":
-    "Educational use only — you are responsible for complying with platform terms and copyright law",
+    "You are responsible for complying with platform terms and copyright law",
   "set.view": "View",
   "set.help": "Help & feedback",
   "set.reportIssue": "Report an issue",
@@ -226,7 +226,7 @@ const en = {
   "d.title": "Disclaimer & Terms of Use",
   "d.subtitle": "Please read carefully before using MediaFetch.",
   "d.p1":
-    "MediaFetch is an independent graphical interface for the open-source tools yt-dlp and FFmpeg. It is provided for educational, research and personal-archival purposes only. It does not host, index, provide or promote any content.",
+    "MediaFetch is an independent graphical interface for the open-source tools yt-dlp and FFmpeg. It is not affiliated with, endorsed by, or sponsored by YouTube, Google, SoundCloud, Vimeo or any other content platform, and it does not host, store, index or distribute any media or content. MediaFetch does not circumvent digital rights management (DRM) or other technological protection measures (TPMs); content protected by DRM is not supported.",
   "d.p2":
     "Downloading content from YouTube, SoundCloud, Vimeo and most other streaming platforms may violate their Terms of Service unless the platform provides an explicit download feature or the rights holder has permitted it. It is your responsibility to review and comply with the terms of any service you use this software with.",
   "d.p3":
@@ -512,7 +512,7 @@ const uk: Record<MsgKey, string> = {
   "set.legal": "Правове",
   "set.disclaimer": "Застереження та умови використання",
   "set.disclaimerHint":
-    "Лише для освітніх цілей — ви відповідаєте за дотримання умов платформ і авторського права",
+    "Ви відповідаєте за дотримання умов платформ і авторського права",
   "set.view": "Переглянути",
   "set.help": "Довідка та відгуки",
   "set.reportIssue": "Повідомити про проблему",
@@ -526,7 +526,7 @@ const uk: Record<MsgKey, string> = {
   "d.title": "Застереження та умови використання",
   "d.subtitle": "Будь ласка, уважно прочитайте перед використанням MediaFetch.",
   "d.p1":
-    "MediaFetch — незалежний графічний інтерфейс для інструментів з відкритим кодом yt-dlp і FFmpeg. Він надається виключно для освітніх, дослідницьких та особистих архівних цілей. Він не розміщує, не індексує, не надає і не просуває жодного контенту.",
+    "MediaFetch — незалежний графічний інтерфейс для інструментів з відкритим кодом yt-dlp і FFmpeg. Він не пов'язаний із YouTube, Google, SoundCloud, Vimeo чи будь-якою іншою контентною платформою, не схвалений і не спонсорований ними, а також не розміщує, не зберігає, не індексує і не розповсюджує жодних медіа чи контенту. MediaFetch не обходить засоби керування цифровими правами (DRM) чи інші технічні засоби захисту (TPM); контент, захищений DRM, не підтримується.",
   "d.p2":
     "Завантаження контенту з YouTube, SoundCloud, Vimeo та більшості інших стрімінгових платформ може порушувати їхні Умови використання, якщо платформа не надає офіційної функції завантаження або правовласник цього не дозволив. Ви зобов'язані ознайомитися з умовами сервісів і дотримуватися їх.",
   "d.p3":
@@ -805,7 +805,7 @@ const ru: Record<MsgKey, string> = {
   "set.legal": "Правовое",
   "set.disclaimer": "Отказ от ответственности и условия использования",
   "set.disclaimerHint":
-    "Только для образовательных целей — вы отвечаете за соблюдение условий платформ и авторского права",
+    "Вы отвечаете за соблюдение условий платформ и авторского права",
   "set.view": "Просмотр",
   "set.help": "Помощь и отзывы",
   "set.reportIssue": "Сообщить о проблеме",
@@ -819,7 +819,7 @@ const ru: Record<MsgKey, string> = {
   "d.title": "Отказ от ответственности и условия использования",
   "d.subtitle": "Пожалуйста, внимательно прочитайте перед использованием MediaFetch.",
   "d.p1":
-    "MediaFetch — независимый графический интерфейс для инструментов с открытым кодом yt-dlp и FFmpeg. Он предоставляется исключительно в образовательных, исследовательских и личных архивных целях. Он не размещает, не индексирует, не предоставляет и не продвигает никакой контент.",
+    "MediaFetch — независимый графический интерфейс для инструментов с открытым кодом yt-dlp и FFmpeg. Он не связан с YouTube, Google, SoundCloud, Vimeo или любой другой контентной платформой, не одобрен и не спонсируется ими, а также не размещает, не хранит, не индексирует и не распространяет никакие медиа или контент. MediaFetch не обходит средства управления цифровыми правами (DRM) или иные технические средства защиты (TPM); контент, защищённый DRM, не поддерживается.",
   "d.p2":
     "Скачивание контента с YouTube, SoundCloud, Vimeo и большинства других стриминговых платформ может нарушать их Условия использования, если платформа не предоставляет официальной функции скачивания или правообладатель этого не разрешил. Вы обязаны ознакомиться с условиями сервисов и соблюдать их.",
   "d.p3":
