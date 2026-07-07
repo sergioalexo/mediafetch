@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "mediafetch"
 version = "0.1.2"
 description = "A yt-dlp + FFmpeg GUI"
@@ -33,3 +33,4 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+

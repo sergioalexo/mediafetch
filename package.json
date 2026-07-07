@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "mediafetch",
   "private": true,
   "version": "0.1.2",
@@ -49,3 +49,4 @@
     "vite": "^6.0.11"
   }
 }
+
