@@ -4,7 +4,6 @@ import {
   AudioLines,
   ChevronDown,
   ChevronRight,
-  ClipboardPaste,
   Download,
   Film,
   Link2,
@@ -185,17 +184,13 @@ export function WorkspacePage() {
           placeholder={"https://www.youtube.com/watch?v=…\nhttps://soundcloud.com/…"}
           className="min-h-[64px] resize-none border-0 shadow-none focus-visible:ring-0"
         />
-        <div className="mt-2 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        {extractUrls(input).length > 0 && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
             <Link2 className="h-3.5 w-3.5" />
-            {extractUrls(input).length > 0
-              ? t("dl.urlsDetected", { n: extractUrls(input).length })
-              : t("dl.noUrls")}
+            <span>{t("dl.urlsDetected", { n: extractUrls(input).length })}</span>
+            <span className="text-muted-foreground/70">· {t("dl.enterHint")}</span>
           </div>
-          <Button size="sm" onClick={() => commit(input)} disabled={extractUrls(input).length === 0}>
-            <ClipboardPaste className="h-3.5 w-3.5" /> {t("dl.paste")}
-          </Button>
-        </div>
+        )}
       </div>
 
       {/* Action bar */}

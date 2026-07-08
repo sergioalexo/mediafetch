@@ -22,9 +22,8 @@ const en = {
   // Downloads page
   "dl.title": "Download",
   "dl.subtitle": "Paste video, playlist or channel URLs — one per line. Drag & drop works too.",
-  "dl.noUrls": "No URLs detected",
   "dl.urlsDetected": "URLs detected: {n}",
-  "dl.paste": "Paste",
+  "dl.enterHint": "press Enter to add",
   "dl.clear": "Clear",
   "dl.analyze": "Analyze",
   "dl.fetching": "Fetching media information…",
@@ -110,6 +109,9 @@ const en = {
   "h.noMatches": "No matches.",
   "h.cleared": "History cleared",
   "h.avg": "avg",
+  "h.took": "in {t}",
+  "h.copyUrl": "Copy source link",
+  "h.urlCopied": "Link copied",
 
   // Stats page
   "s.title": "Statistics",
@@ -332,9 +334,8 @@ const uk: Record<MsgKey, string> = {
   "dl.title": "Завантаження",
   "dl.subtitle":
     "Вставте URL відео, плейлиста чи каналу — по одному на рядок. Перетягування теж працює.",
-  "dl.noUrls": "URL не виявлено",
   "dl.urlsDetected": "Виявлено URL: {n}",
-  "dl.paste": "Вставити",
+  "dl.enterHint": "натисніть Enter, щоб додати",
   "dl.clear": "Очистити",
   "dl.analyze": "Аналізувати",
   "dl.fetching": "Отримання інформації про медіа…",
@@ -418,6 +419,9 @@ const uk: Record<MsgKey, string> = {
   "h.noMatches": "Збігів немає.",
   "h.cleared": "Історію очищено",
   "h.avg": "серед.",
+  "h.took": "за {t}",
+  "h.copyUrl": "Копіювати посилання",
+  "h.urlCopied": "Посилання скопійовано",
 
   "s.title": "Статистика",
   "s.subtitle": "Статистика завантажень за весь час",
@@ -629,9 +633,8 @@ const ru: Record<MsgKey, string> = {
   "dl.title": "Загрузка",
   "dl.subtitle":
     "Вставьте URL видео, плейлиста или канала — по одному на строку. Перетаскивание тоже работает.",
-  "dl.noUrls": "URL не обнаружены",
   "dl.urlsDetected": "Обнаружено URL: {n}",
-  "dl.paste": "Вставить",
+  "dl.enterHint": "нажмите Enter, чтобы добавить",
   "dl.clear": "Очистить",
   "dl.analyze": "Анализировать",
   "dl.fetching": "Получение информации о медиа…",
@@ -715,6 +718,9 @@ const ru: Record<MsgKey, string> = {
   "h.noMatches": "Совпадений нет.",
   "h.cleared": "История очищена",
   "h.avg": "средн.",
+  "h.took": "за {t}",
+  "h.copyUrl": "Копировать ссылку",
+  "h.urlCopied": "Ссылка скопирована",
 
   "s.title": "Статистика",
   "s.subtitle": "Статистика загрузок за всё время",

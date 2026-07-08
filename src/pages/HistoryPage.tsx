@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import { FolderOpen, Music, Play, Search, Trash2, Video, X } from "lucide-react";
+import { Copy, FolderOpen, Globe, Music, Play, Search, Trash2, Video, X } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
 import * as api from "@/lib/api";
-import { formatBytes, formatDate, formatSpeed } from "@/lib/utils";
+import { formatBytes, formatDate, formatEta, formatSpeed, hostname } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,7 +71,9 @@ export function HistoryPage() {
       </div>
 
       <div className="space-y-1.5">
-        {filtered.map((h) => (
+        {filtered.map((h) => {
+          const host = hostname(h.url);
+          return (
           <div
             key={h.id}
             className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5"
@@ -87,9 +89,15 @@ export function HistoryPage() {
               <div className="truncate text-sm font-medium" title={h.title}>
                 {h.title}
               </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{formatDate(h.downloadedAt)}</span>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                {host && (
+                  <span className="inline-flex items-center gap-1" title={h.url}>
+                    <Globe className="h-3 w-3" /> {host}
+                  </span>
+                )}
+                <span>{host ? "· " : ""}{formatDate(h.downloadedAt)}</span>
                 {h.filesize > 0 && <span>· {formatBytes(h.filesize)}</span>}
+                {h.elapsedSecs > 0 && <span>· {t("h.took", { t: formatEta(h.elapsedSecs) })}</span>}
                 {h.avgSpeed > 0 && (
                   <span>
                     · {formatSpeed(h.avgSpeed)} {t("h.avg")}
@@ -124,6 +132,23 @@ export function HistoryPage() {
                   </Tooltip>
                 </>
               )}
+              {h.url && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="iconSm"
+                      variant="ghost"
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(h.url);
+                        toast({ title: t("h.urlCopied"), variant: "default" });
+                      }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("h.copyUrl")}</TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -141,7 +166,8 @@ export function HistoryPage() {
               </Tooltip>
             </div>
           </div>
-        ))}
+          );
+        })}
         {filtered.length === 0 && (
           <div className="rounded-xl border border-dashed py-14 text-center text-sm text-muted-foreground">
             {history.length === 0 ? t("h.none") : t("h.noMatches")}
