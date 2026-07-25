@@ -274,7 +274,10 @@ fn build_args(
     } else {
         args.extend([
             "-f".into(),
-            opts.format.clone().unwrap_or_else(|| "bv*+ba/b".into()),
+            // Trailing "/ba" falls back to audio-only when the source has no
+            // video stream at all (e.g. YouTube Music), instead of hard
+            // failing with "Requested format is not available".
+            opts.format.clone().unwrap_or_else(|| "bv*+ba/b/ba".into()),
         ]);
     }
 

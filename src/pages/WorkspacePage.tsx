@@ -9,9 +9,11 @@ import {
   Link2,
   ListVideo,
   Loader2,
+  Pause,
   Pencil,
   Play,
   Plus,
+  Square,
   Trash2,
   X,
 } from "lucide-react";
@@ -231,11 +233,37 @@ export function WorkspacePage() {
             <span className="text-xs font-medium text-muted-foreground">
               {t("q.title")} · {queue.length}
             </span>
-            {queue.some((t) => ["completed", "failed", "cancelled"].includes(t.status)) && (
-              <Button variant="ghost" size="sm" onClick={() => api.clearFinished()}>
-                <Trash2 className="h-3.5 w-3.5" /> {t("ws.clearDone")}
-              </Button>
-            )}
+            <div className="flex items-center gap-1">
+              {queue.some((t) =>
+                ["queued", "downloading", "postprocessing"].includes(t.status)
+              ) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" onClick={() => void api.pauseAllTasks()}>
+                      <Pause className="h-3.5 w-3.5" /> {t("ws.pauseAll")}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("tip.pauseAll")}</TooltipContent>
+                </Tooltip>
+              )}
+              {queue.some((t) =>
+                ["queued", "downloading", "postprocessing", "paused"].includes(t.status)
+              ) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" onClick={() => void api.cancelAllTasks()}>
+                      <Square className="h-3.5 w-3.5" /> {t("ws.stopAll")}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("tip.stopAll")}</TooltipContent>
+                </Tooltip>
+              )}
+              {queue.some((t) => ["completed", "failed", "cancelled"].includes(t.status)) && (
+                <Button variant="ghost" size="sm" onClick={() => api.clearFinished()}>
+                  <Trash2 className="h-3.5 w-3.5" /> {t("ws.clearDone")}
+                </Button>
+              )}
+            </div>
           </div>
           <AnimatePresence initial={false}>
             {rendered.map((row) =>

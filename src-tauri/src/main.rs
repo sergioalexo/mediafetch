@@ -167,6 +167,62 @@ fn cancel_task(app: AppHandle, state: State<AppState>, id: String) {
 }
 
 #[tauri::command]
+fn pause_all_tasks(app: AppHandle, state: State<AppState>) {
+    let running_ids: Vec<String> = {
+        let mut q = state.queue.lock().unwrap();
+        q.iter_mut()
+            .filter_map(|t| {
+                let was_running = matches!(
+                    t.status,
+                    TaskStatus::Downloading | TaskStatus::Postprocessing
+                );
+                if was_running || t.status == TaskStatus::Queued {
+                    t.status = TaskStatus::Paused;
+                    t.speed = 0.0;
+                    t.eta = 0.0;
+                    was_running.then(|| t.id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+    for id in running_ids {
+        downloader::kill_task_process(&app, &id);
+    }
+    downloader::emit_queue(&app);
+    downloader::pump(&app);
+}
+
+#[tauri::command]
+fn cancel_all_tasks(app: AppHandle, state: State<AppState>) {
+    let running_ids: Vec<String> = {
+        let mut q = state.queue.lock().unwrap();
+        q.iter_mut()
+            .filter_map(|t| {
+                let was_running = matches!(
+                    t.status,
+                    TaskStatus::Downloading | TaskStatus::Postprocessing
+                );
+                if !matches!(t.status, TaskStatus::Completed | TaskStatus::Failed) {
+                    t.status = TaskStatus::Cancelled;
+                    t.speed = 0.0;
+                    t.eta = 0.0;
+                    was_running.then(|| t.id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+    for id in running_ids {
+        downloader::kill_task_process(&app, &id);
+    }
+    downloader::emit_queue(&app);
+    downloader::pump(&app);
+}
+
+#[tauri::command]
 fn retry_task(app: AppHandle, state: State<AppState>, id: String) {
     {
         let mut q = state.queue.lock().unwrap();
@@ -405,6 +461,8 @@ fn main() {
             pause_task,
             resume_task,
             cancel_task,
+            pause_all_tasks,
+            cancel_all_tasks,
             retry_task,
             remove_task,
             reorder_task,

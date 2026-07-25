@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "mediafetch"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "futures-util",
  "regex",
