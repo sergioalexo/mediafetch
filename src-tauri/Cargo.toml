@@ -1,6 +1,6 @@
 [package]
 name = "mediafetch"
-version = "0.1.8"
+version = "0.1.9"
 description = "A yt-dlp + FFmpeg GUI"
 edition = "2021"
 

@@ -169,6 +169,18 @@ fn build_args(
         args.extend(["--ffmpeg-location".into(), ffdir.to_string_lossy().into_owned()]);
     }
 
+    // Prefer the "android_vr" YouTube player client: as of mid-2026 the
+    // "web"/"ios"/"mweb" clients frequently return zero playable formats for
+    // otherwise-normal videos (surfacing as "Requested format is not
+    // available") once YouTube's bot/PO-token checks kick in, while
+    // android_vr still serves full format lists without a token. Keep "web"
+    // as a fallback so cookie-gated (private/members-only) videos, which
+    // android_vr can't authenticate for, still resolve.
+    args.extend([
+        "--extractor-args".into(),
+        "youtube:player_client=android_vr,web".into(),
+    ]);
+
     // Network
     if settings.concurrent_fragments > 1 {
         args.extend(["-N".into(), settings.concurrent_fragments.to_string()]);
