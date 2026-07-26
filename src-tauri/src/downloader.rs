@@ -276,7 +276,7 @@ fn build_args(
             };
             args.extend(["--audio-quality".into(), arg]);
             // Joint stereo squeezes more quality from constant-bitrate MP3.
-            if audio_format == "mp3" && quality != "vbr" {
+            if audio_format == "mp3" && quality != "vbr" && settings.joint_stereo {
                 args.extend([
                     "--postprocessor-args".into(),
                     "ExtractAudio:-joint_stereo 1".into(),

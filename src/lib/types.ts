@@ -106,6 +106,8 @@ export interface Settings {
   sponsorblockCategories: string[];
   embedThumbnail: boolean;
   embedMetadata: boolean;
+  /** Use joint stereo when encoding constant-bitrate MP3. */
+  jointStereo: boolean;
   writeSubs: boolean;
   embedSubs: boolean;
   subLangs: string;
