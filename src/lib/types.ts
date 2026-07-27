@@ -101,6 +101,8 @@ export interface DownloadTask {
   playlistCount?: number | null;
   /** Automatic retries already attempted for this task. */
   retryCount: number;
+  /** Set by auto-retry after a write failure: skip concurrent fragments. */
+  forceSingleConnection: boolean;
   options: DownloadOptions;
 }
 

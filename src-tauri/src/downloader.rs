@@ -192,6 +192,7 @@ pub fn build_args(
     app: &AppHandle,
     opts: &DownloadOptions,
     settings: &Settings,
+    force_single_connection: bool,
 ) -> Result<Vec<String>, String> {
     let mut args: Vec<String> = Vec::new();
     let is_audio = opts.kind == "audio";
@@ -251,7 +252,7 @@ pub fn build_args(
     ]);
 
     // Network
-    if settings.concurrent_fragments > 1 {
+    if settings.concurrent_fragments > 1 && !force_single_connection {
         args.extend(["-N".into(), settings.concurrent_fragments.to_string()]);
     }
     if !settings.rate_limit.trim().is_empty() {
@@ -579,7 +580,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             return;
         }
     };
-    let args = match build_args(&app, &task.options, &settings) {
+    let args = match build_args(&app, &task.options, &settings, task.force_single_connection) {
         Ok(a) => a,
         Err(e) => {
             fail_task(&app, &task, &settings, e).await;
@@ -614,6 +615,9 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     // Fresh transcript for this run — a retry shouldn't mix in the previous
     // attempt's output.
     clear_log(&app, &task.id);
+    if task.force_single_connection {
+        push_log(&app, &task.id, "Retrying without concurrent fragments (-N) to rule out write contention.".into());
+    }
     push_log(&app, &task.id, format!("$ {} {}", ytdlp.to_string_lossy(), args.join(" ")));
 
     // Collect stderr in the background for error reporting, and mirror every
@@ -771,11 +775,40 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             // reliably succeed on a plain retry — don't make the user click
             // for those. A short pause gives whatever held the file/network
             // a moment to clear.
-            push_log(&app, &task.id, format!("Auto-retrying ({}/{})…", task.retry_count + 1, settings.auto_retry_limit));
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            //
+            // A write failure right at "[download] Destination: ..." with no
+            // progress at all looks like write contention — several tasks'
+            // concurrent-fragment threads landing on the same folder at once
+            // — rather than a real per-video problem. Retrying that case
+            // without concurrent fragments removes the likely trigger, and
+            // gets a longer pause so the rest of the batch has time to ease off.
+            let lower = error.to_lowercase();
+            let looks_like_write_contention = lower.contains("errno 22")
+                || lower.contains("invalid argument")
+                || lower.contains("unable to open for writing")
+                || lower.contains("unable to download video");
+            let delay = if looks_like_write_contention { 6 } else { 3 };
+            push_log(
+                &app,
+                &task.id,
+                format!(
+                    "Auto-retrying ({}/{}){}…",
+                    task.retry_count + 1,
+                    settings.auto_retry_limit,
+                    if looks_like_write_contention {
+                        " without concurrent fragments"
+                    } else {
+                        ""
+                    }
+                ),
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
             with_task(&app, &task.id, |t| {
                 t.status = TaskStatus::Queued;
                 t.retry_count += 1;
+                if looks_like_write_contention {
+                    t.force_single_connection = true;
+                }
                 t.progress = 0.0;
                 t.downloaded_bytes = 0;
                 t.speed = 0.0;

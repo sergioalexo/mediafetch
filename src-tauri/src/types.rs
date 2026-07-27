@@ -94,6 +94,12 @@ pub struct DownloadTask {
     /// Number of automatic retries already attempted for this task.
     #[serde(default)]
     pub retry_count: u32,
+    /// Set by an auto-retry after a file-write failure (Errno 22 and
+    /// similar): skip concurrent-fragment downloading for this attempt,
+    /// since parallel writes into a busy folder (many tasks × several
+    /// fragment threads each) are a likely trigger.
+    #[serde(default)]
+    pub force_single_connection: bool,
     pub options: DownloadOptions,
 }
 
