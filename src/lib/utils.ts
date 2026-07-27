@@ -54,6 +54,15 @@ export function extractUrls(text: string): string[] {
   return [...new Set(found.map((u) => u.trim()))];
 }
 
+/** Human-friendly source host for a URL, e.g. "youtube.com" (no "www."). */
+export function hostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 export function codecLabel(vcodec?: string | null): string {
   if (!vcodec || vcodec === "none") return "";
   const c = vcodec.toLowerCase();

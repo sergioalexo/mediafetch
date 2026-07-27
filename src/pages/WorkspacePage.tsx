@@ -4,7 +4,6 @@ import {
   AudioLines,
   ChevronDown,
   ChevronRight,
-  ClipboardPaste,
   Download,
   Film,
   Link2,
@@ -15,6 +14,7 @@ import {
   Play,
   Plus,
   Search,
+  Square,
   Terminal,
   Trash2,
   X,
@@ -134,11 +134,6 @@ export function WorkspacePage() {
     return speed > 0 ? remaining / speed : null;
   }, [queue]);
 
-  const pauseAll = () => {
-    for (const t of queue) {
-      if (t.status === "downloading" || t.status === "queued") void api.pauseTask(t.id);
-    }
-  };
   const resumeAll = () => {
     for (const t of queue) {
       if (t.status === "paused") void api.resumeTask(t.id);
@@ -232,17 +227,13 @@ export function WorkspacePage() {
           placeholder={"https://www.youtube.com/watch?v=…\nhttps://soundcloud.com/…"}
           className="min-h-[64px] resize-none border-0 shadow-none focus-visible:ring-0"
         />
-        <div className="mt-2 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        {extractUrls(input).length > 0 && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
             <Link2 className="h-3.5 w-3.5" />
-            {extractUrls(input).length > 0
-              ? t("dl.urlsDetected", { n: extractUrls(input).length })
-              : t("dl.noUrls")}
+            <span>{t("dl.urlsDetected", { n: extractUrls(input).length })}</span>
+            <span className="text-muted-foreground/70">· {t("dl.enterHint")}</span>
           </div>
-          <Button size="sm" onClick={() => commit(input)} disabled={extractUrls(input).length === 0}>
-            <ClipboardPaste className="h-3.5 w-3.5" /> {t("dl.paste")}
-          </Button>
-        </div>
+        )}
       </div>
 
       {/* Action bar */}
@@ -286,16 +277,35 @@ export function WorkspacePage() {
               </span>
               {totalEta != null && <span>· {t("q.totalEta", { eta: formatEta(totalEta) })}</span>}
             </div>
-            <div className="flex items-center gap-1.5">
-              {queue.some((t) => t.status === "downloading" || t.status === "queued") && (
-                <Button variant="ghost" size="sm" onClick={pauseAll}>
-                  <Pause className="h-3.5 w-3.5" /> {t("q.pauseAll")}
-                </Button>
+            <div className="flex items-center gap-1">
+              {queue.some((t) =>
+                ["queued", "downloading", "postprocessing"].includes(t.status)
+              ) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" onClick={() => void api.pauseAllTasks()}>
+                      <Pause className="h-3.5 w-3.5" /> {t("ws.pauseAll")}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("tip.pauseAll")}</TooltipContent>
+                </Tooltip>
               )}
               {queue.some((t) => t.status === "paused") && (
                 <Button variant="ghost" size="sm" onClick={resumeAll}>
                   <Play className="h-3.5 w-3.5" /> {t("q.resumeAll")}
                 </Button>
+              )}
+              {queue.some((t) =>
+                ["queued", "downloading", "postprocessing", "paused"].includes(t.status)
+              ) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="ghost" size="sm" onClick={() => void api.cancelAllTasks()}>
+                      <Square className="h-3.5 w-3.5" /> {t("ws.stopAll")}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("tip.stopAll")}</TooltipContent>
+                </Tooltip>
               )}
               {queue.some((t) => ["completed", "failed", "cancelled"].includes(t.status)) && (
                 <Button variant="ghost" size="sm" onClick={() => api.clearFinished()}>

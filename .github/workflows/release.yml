@@ -50,11 +50,47 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "MediaFetch ${{ github.ref_name }}"
           releaseBody: |
-            See the assets below to download and install this version.
+            ## Which download do I need?
 
-            **Windows**: download `MediaFetch_x.y.z_x64-setup.exe` and run it. If SmartScreen shows "Windows protected your PC", click **More info → Run anyway**.
+            | Your computer | Download this file |
+            | --- | --- |
+            | 🪟 **Windows** 10 / 11 (64-bit) | `MediaFetch_x.y.z_x64-setup.exe` |
+            | 🍎 **macOS** (Apple Silicon + Intel) | `MediaFetch_x.y.z_universal.dmg` |
 
-            **macOS**: download the `.dmg` and drag MediaFetch to Applications. Because the app is not yet notarized by Apple, the first launch is blocked: open **System Settings → Privacy & Security**, scroll down and click **"Open Anyway"** next to the MediaFetch message (on macOS Sonoma and older you can instead right-click the app → **Open** → **Open**). This is only needed once.
+            The other files (`.sig`, `.app.tar.gz`, `latest.json`) are used by the in-app updater — you don't need to download them manually.
+
+            ### 🪟 Windows
+            Download the `.exe` and run it. If SmartScreen shows "Windows protected your PC", click **More info → Run anyway**.
+
+            ### 🍎 macOS
+            Download the `.dmg`, open it and drag **MediaFetch** to Applications. Because the app is not yet notarized by Apple, the first launch is blocked: open **System Settings → Privacy & Security**, scroll down and click **"Open Anyway"** next to the MediaFetch message (on macOS Sonoma and older you can instead right-click the app → **Open** → **Open**). This is only needed once.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Give the human-facing installers a clear, OS-labeled name on the release
+      # page so people know which one to pick. Only the manual-download artifacts
+      # are labeled; the updater files (the .exe/.app.tar.gz referenced by
+      # latest.json) keep their original filenames so self-update keeps working.
+      - name: Label installers by operating system
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          label_asset() {
+            local suffix="$1" label="$2" url u
+            url=$(gh release view "$TAG" --repo "$REPO" --json assets \
+              -q ".assets[] | select(.name | endswith(\"$suffix\")) | .apiUrl")
+            for u in $url; do
+              gh api -X PATCH "$u" -f label="$label" >/dev/null
+              echo "Labeled $u -> $label"
+            done
+          }
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            label_asset "_x64-setup.exe" "Windows 10/11 installer (64-bit)"
+          else
+            label_asset "_universal.dmg" "macOS disk image (Apple Silicon + Intel)"
+          fi

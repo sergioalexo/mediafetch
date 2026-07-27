@@ -238,6 +238,18 @@ pub fn build_args(
         args.extend(["--ffmpeg-location".into(), ffdir.to_string_lossy().into_owned()]);
     }
 
+    // Prefer the "android_vr" YouTube player client: as of mid-2026 the
+    // "web"/"ios"/"mweb" clients frequently return zero playable formats for
+    // otherwise-normal videos (surfacing as "Requested format is not
+    // available") once YouTube's bot/PO-token checks kick in, while
+    // android_vr still serves full format lists without a token. Keep "web"
+    // as a fallback so cookie-gated (private/members-only) videos, which
+    // android_vr can't authenticate for, still resolve.
+    args.extend([
+        "--extractor-args".into(),
+        "youtube:player_client=android_vr,web".into(),
+    ]);
+
     // Network
     if settings.concurrent_fragments > 1 {
         args.extend(["-N".into(), settings.concurrent_fragments.to_string()]);
@@ -345,7 +357,7 @@ pub fn build_args(
             };
             args.extend(["--audio-quality".into(), arg]);
             // Joint stereo squeezes more quality from constant-bitrate MP3.
-            if audio_format == "mp3" && quality != "vbr" {
+            if audio_format == "mp3" && quality != "vbr" && settings.joint_stereo {
                 args.extend([
                     "--postprocessor-args".into(),
                     "ExtractAudio:-joint_stereo 1".into(),
@@ -355,7 +367,10 @@ pub fn build_args(
     } else {
         args.extend([
             "-f".into(),
-            opts.format.clone().unwrap_or_else(|| "bv*+ba/b".into()),
+            // Trailing "/ba" falls back to audio-only when the source has no
+            // video stream at all (e.g. YouTube Music), instead of hard
+            // failing with "Requested format is not available".
+            opts.format.clone().unwrap_or_else(|| "bv*+ba/b/ba".into()),
         ]);
     }
 

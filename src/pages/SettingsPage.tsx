@@ -319,6 +319,12 @@ export function SettingsPage() {
               onCheckedChange={(v) => set({ embedMetadata: v })}
             />
           </Row>
+          <Row label={t("set.jointStereo")} hint={t("set.jointStereoHint")}>
+            <Switch
+              checked={settings.jointStereo}
+              onCheckedChange={(v) => set({ jointStereo: v })}
+            />
+          </Row>
           <Row label={t("set.embedSubs")} hint={t("set.embedSubsHint")}>
             <Switch
               checked={settings.embedSubs}

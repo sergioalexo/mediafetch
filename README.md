@@ -95,7 +95,12 @@ git tag v0.2.0
 git push --tags
 ```
 
-GitHub Actions builds the **Windows NSIS installer** and the **macOS universal DMG** and publishes them under [GitHub Releases](https://github.com/sergioalexo/mediafetch/releases).
+GitHub Actions builds the **Windows NSIS installer** and the **macOS universal DMG** and publishes them under [GitHub Releases](https://github.com/sergioalexo/mediafetch/releases). Each release lists exactly which file to grab per platform, and the two installers are labeled by operating system ("Windows 10/11 installer", "macOS disk image") so users don't have to guess:
+
+| Platform | Asset |
+| --- | --- |
+| Windows 10/11 (64-bit) | `MediaFetch_<version>_x64-setup.exe` |
+| macOS (Apple Silicon + Intel) | `MediaFetch_<version>_universal.dmg` |
 
 The macOS build is currently not notarized by Apple, so the first launch is blocked by Gatekeeper: open **System Settings → Privacy & Security** and click **"Open Anyway"** next to the MediaFetch message (on macOS Sonoma and older: right-click the app → Open → Open), or run `xattr -cr /Applications/MediaFetch.app`. This is only needed once per install.
 

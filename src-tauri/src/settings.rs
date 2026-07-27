@@ -78,6 +78,9 @@ pub struct Settings {
     pub sponsorblock_categories: Vec<String>,
     pub embed_thumbnail: bool,
     pub embed_metadata: bool,
+    /// Use joint stereo when encoding constant-bitrate MP3 (better quality
+    /// per bit; off encodes plain stereo channels independently).
+    pub joint_stereo: bool,
     pub write_subs: bool,
     pub embed_subs: bool,
     pub sub_langs: String,
@@ -126,6 +129,7 @@ impl Default for Settings {
             sponsorblock_categories: vec!["sponsor".into()],
             embed_thumbnail: true,
             embed_metadata: true,
+            joint_stereo: true,
             write_subs: false,
             embed_subs: true,
             sub_langs: "en".into(),

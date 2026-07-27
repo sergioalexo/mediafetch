@@ -29,6 +29,8 @@ export const enqueue = (items: DownloadOptions[]) =>
 export const pauseTask = (id: string) => invoke<void>("pause_task", { id });
 export const resumeTask = (id: string) => invoke<void>("resume_task", { id });
 export const cancelTask = (id: string) => invoke<void>("cancel_task", { id });
+export const pauseAllTasks = () => invoke<void>("pause_all_tasks");
+export const cancelAllTasks = () => invoke<void>("cancel_all_tasks");
 export const retryTask = (id: string) => invoke<void>("retry_task", { id });
 export const removeTask = (id: string) => invoke<void>("remove_task", { id });
 export const reorderTask = (id: string, newIndex: number) =>

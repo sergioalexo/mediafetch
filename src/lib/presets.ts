@@ -56,12 +56,15 @@ export const VIDEO_PRESETS: {
   fixed?: string;
   f: string;
 }[] = [
-  { value: "best", label: "dl.bestAvailable", f: "bv*+ba/b" },
-  { value: "2160", label: null, fixed: "4K (2160p)", f: "bv*[height<=2160]+ba/b" },
-  { value: "1440", label: null, fixed: "1440p", f: "bv*[height<=1440]+ba/b" },
-  { value: "1080", label: null, fixed: "1080p", f: "bv*[height<=1080]+ba/b" },
-  { value: "720", label: null, fixed: "720p", f: "bv*[height<=720]+ba/b" },
-  { value: "480", label: null, fixed: "480p", f: "bv*[height<=480]+ba/b" },
+  // Trailing "/ba" covers audio-only sources (e.g. YouTube Music "song"
+  // pages with no video stream at all), which otherwise hard-fail with
+  // "Requested format is not available" once bv*+ba and b both fail.
+  { value: "best", label: "dl.bestAvailable", f: "bv*+ba/b/ba" },
+  { value: "2160", label: null, fixed: "4K (2160p)", f: "bv*[height<=2160]+ba/b/ba" },
+  { value: "1440", label: null, fixed: "1440p", f: "bv*[height<=1440]+ba/b/ba" },
+  { value: "1080", label: null, fixed: "1080p", f: "bv*[height<=1080]+ba/b/ba" },
+  { value: "720", label: null, fixed: "720p", f: "bv*[height<=720]+ba/b/ba" },
+  { value: "480", label: null, fixed: "480p", f: "bv*[height<=480]+ba/b/ba" },
 ];
 
 export function videoPresetLabel(
