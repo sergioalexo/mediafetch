@@ -72,7 +72,12 @@ pub fn clear_log(app: &AppHandle, id: &str) {
     state.logs.lock().unwrap().remove(id);
 }
 
-const PROGRESS_TEMPLATE: &str = "download:MFPROG|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.playlist_index)s|%(info.playlist_count)s|%(info.title)s";
+/// Numeric fields only, deliberately. Progress lines are written straight to
+/// the stream by yt-dlp's multiline printer, bypassing `--encoding` — a title
+/// carried here arrives in the OS ANSI codepage with every character it can't
+/// represent silently dropped. The title comes from the destination path
+/// instead, which does go through the encoding-aware writer.
+const PROGRESS_TEMPLATE: &str = "download:MFPROG|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.playlist_index)s|%(info.playlist_count)s";
 const PP_TEMPLATE: &str = "postprocess:MFPP";
 
 pub fn emit_queue(app: &AppHandle) {
@@ -125,15 +130,50 @@ pub fn kill_tree(pid: u32) {
         .output();
 }
 
-/// yt-dlp is a frozen Python interpreter. When its stdout/stderr are piped
-/// (not attached to a real console, as ours always are) Python falls back to
-/// the OS ANSI codepage instead of UTF-8 for text I/O. On Windows that's
-/// usually cp1252, which can't encode most non-Latin video titles — writing
-/// one then crashes with "OSError: [Errno 22] Invalid argument". Forcing
-/// UTF-8 mode avoids that regardless of title language or system locale.
+/// When yt-dlp's output is piped rather than attached to a console — as ours
+/// always is — its Python runtime encodes text I/O with the OS ANSI codepage
+/// instead of UTF-8 (cp1252 on a typical Windows install). Non-Latin titles
+/// then come out as mojibake or invalid bytes.
+///
+/// `--encoding utf-8` is what actually fixes this: the PyInstaller-frozen
+/// yt-dlp.exe we ship ignores `PYTHONUTF8`/`PYTHONIOENCODING` entirely. The
+/// env vars stay for the case where yt-dlp resolves to a plain-Python install
+/// on PATH, where they do work.
+const ENCODING_ARGS: [&str; 2] = ["--encoding", "utf-8"];
+
 fn force_utf8_io(cmd: &mut tokio::process::Command) {
     cmd.env("PYTHONUTF8", "1");
     cmd.env("PYTHONIOENCODING", "utf-8");
+}
+
+/// Read a child pipe line by line, tolerating anything that comes through it.
+///
+/// `BufReader::lines()` fails a whole line with `InvalidData` when it isn't
+/// valid UTF-8, and our read loops treated any error as end-of-stream. One
+/// mis-encoded byte therefore stopped us draining the pipe and dropped the
+/// read end, after which yt-dlp's next write to stdout failed — surfacing as
+/// "unable to open for writing: [Errno 22] Invalid argument", because yt-dlp
+/// prints the destination inside the same `try` that opens the output file.
+/// Decoding lossily keeps the pipe drained no matter what yt-dlp emits.
+async fn read_lines<R, F>(reader: R, mut on_line: F)
+where
+    R: tokio::io::AsyncRead + Unpin,
+    F: FnMut(String),
+{
+    let mut reader = BufReader::new(reader);
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                while matches!(buf.last(), Some(b'\n' | b'\r')) {
+                    buf.pop();
+                }
+                on_line(String::from_utf8_lossy(&buf).into_owned());
+            }
+        }
+    }
 }
 
 pub fn kill_task_process(app: &AppHandle, id: &str) {
@@ -188,11 +228,22 @@ pub fn pump(app: &AppHandle) {
     }
 }
 
+/// Per-attempt adjustments an auto-retry applies to work around whatever
+/// killed the previous attempt. A retry that changes nothing just fails again.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RetryTweaks {
+    /// Download without concurrent fragments (`-N`).
+    pub single_connection: bool,
+    /// Let yt-dlp pick its own YouTube player clients instead of our pinned
+    /// ones, so the attempt gets a freshly signed set of media URLs.
+    pub default_player_client: bool,
+}
+
 pub fn build_args(
     app: &AppHandle,
     opts: &DownloadOptions,
     settings: &Settings,
-    force_single_connection: bool,
+    tweaks: RetryTweaks,
 ) -> Result<Vec<String>, String> {
     let mut args: Vec<String> = Vec::new();
     let is_audio = opts.kind == "audio";
@@ -200,6 +251,8 @@ pub fn build_args(
     args.extend([
         "--newline".into(),
         "--no-warnings".into(),
+        ENCODING_ARGS[0].into(),
+        ENCODING_ARGS[1].into(),
         "--progress-template".into(),
         PROGRESS_TEMPLATE.into(),
         "--progress-template".into(),
@@ -246,13 +299,19 @@ pub fn build_args(
     // android_vr still serves full format lists without a token. Keep "web"
     // as a fallback so cookie-gated (private/members-only) videos, which
     // android_vr can't authenticate for, still resolve.
-    args.extend([
-        "--extractor-args".into(),
-        "youtube:player_client=android_vr,web".into(),
-    ]);
+    //
+    // A retry after an HTTP 403 drops the pin instead: those media URLs are
+    // dead for good, so the retry is only worth anything if it re-extracts
+    // through different clients than the ones that just got refused.
+    if !tweaks.default_player_client {
+        args.extend([
+            "--extractor-args".into(),
+            "youtube:player_client=android_vr,web".into(),
+        ]);
+    }
 
     // Network
-    if settings.concurrent_fragments > 1 && !force_single_connection {
+    if settings.concurrent_fragments > 1 && !tweaks.single_connection {
         args.extend(["-N".into(), settings.concurrent_fragments.to_string()]);
     }
     if !settings.rate_limit.trim().is_empty() {
@@ -521,6 +580,7 @@ async fn probe_abr(app: &AppHandle, url: &str, settings: &Settings) -> Option<f6
         "--no-playlist",
         "--no-warnings",
     ]);
+    cmd.args(ENCODING_ARGS);
     if !settings.proxy.trim().is_empty() {
         cmd.args(["--proxy", settings.proxy.trim()]);
     }
@@ -544,6 +604,14 @@ async fn probe_abr(app: &AppHandle, url: &str, settings: &Settings) -> Option<f6
     let mut parts = line.trim().split('|');
     let abr = parts.next().and_then(|f| parse_f64(f));
     abr.or_else(|| parts.next().and_then(|f| parse_f64(f)))
+}
+
+/// Filename without its extension, for use as a display title.
+fn file_stem(path: &str) -> Option<String> {
+    std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
 }
 
 fn parse_f64(field: &str) -> Option<f64> {
@@ -580,7 +648,11 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             return;
         }
     };
-    let args = match build_args(&app, &task.options, &settings, task.force_single_connection) {
+    let tweaks = RetryTweaks {
+        single_connection: task.force_single_connection,
+        default_player_client: task.use_default_player_client,
+    };
+    let args = match build_args(&app, &task.options, &settings, tweaks) {
         Ok(a) => a,
         Err(e) => {
             fail_task(&app, &task, &settings, e).await;
@@ -618,6 +690,9 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     if task.force_single_connection {
         push_log(&app, &task.id, "Retrying without concurrent fragments (-N) to rule out write contention.".into());
     }
+    if task.use_default_player_client {
+        push_log(&app, &task.id, "Retrying with yt-dlp's default player clients to get fresh media URLs.".into());
+    }
     push_log(&app, &task.id, format!("$ {} {}", ytdlp.to_string_lossy(), args.join(" ")));
 
     // Collect stderr in the background for error reporting, and mirror every
@@ -628,8 +703,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     let stderr_task = tauri::async_runtime::spawn(async move {
         let mut tail: VecDeque<String> = VecDeque::with_capacity(16);
         if let Some(stderr) = stderr {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            read_lines(stderr, |line| {
                 if !line.trim().is_empty() {
                     push_log(&stderr_app, &stderr_id, line.clone());
                     if tail.len() >= 15 {
@@ -637,7 +711,8 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                     }
                     tail.push_back(line);
                 }
-            }
+            })
+            .await;
         }
         tail
     });
@@ -653,9 +728,8 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         regex::Regex::new(r#"^\[download\] (.+) has already been downloaded"#).unwrap();
 
     if let Some(stdout) = child.stdout.take() {
-        let mut lines = BufReader::new(stdout).lines();
         let mut last_emit = std::time::Instant::now();
-        while let Ok(Some(line)) = lines.next_line().await {
+        read_lines(stdout, |line| {
             let line = line.trim_end();
             let mut updated: Option<DownloadTask> = None;
             let mut force_emit = false;
@@ -667,15 +741,14 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             }
 
             if let Some(rest) = line.strip_prefix("MFPROG|") {
-                let fields: Vec<&str> = rest.splitn(8, '|').collect();
-                if fields.len() == 8 {
+                let fields: Vec<&str> = rest.splitn(7, '|').collect();
+                if fields.len() == 7 {
                     let downloaded = parse_f64(fields[0]).unwrap_or(0.0);
                     let total = parse_f64(fields[1]).or_else(|| parse_f64(fields[2]));
                     let speed = parse_f64(fields[3]);
                     let eta = parse_f64(fields[4]);
                     let pl_index = parse_f64(fields[5]).map(|x| x as u32);
                     let pl_count = parse_f64(fields[6]).map(|x| x as u32);
-                    let title = fields[7].trim();
 
                     updated = with_task(&app, &task.id, |t| {
                         if t.status == TaskStatus::Downloading
@@ -696,9 +769,6 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                             t.playlist_index = pl_index;
                             t.playlist_count = pl_count;
                         }
-                        if !title.is_empty() && title != "NA" && t.options.title.is_none() {
-                            t.title = title.to_string();
-                        }
                     });
                 }
             } else if line.starts_with("MFPP") {
@@ -718,6 +788,15 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             {
                 let path = caps.get(1).map(|m| m.as_str().to_string());
                 updated = with_task(&app, &task.id, |t| {
+                    // A task queued without prior analysis has no title yet;
+                    // the destination stem is the title as the output template
+                    // rendered it, and unlike the progress lines it survives
+                    // the trip through yt-dlp's encoding-aware writer.
+                    if t.options.title.is_none() {
+                        if let Some(stem) = path.as_deref().and_then(file_stem) {
+                            t.title = stem;
+                        }
+                    }
                     t.filename = path;
                 });
             }
@@ -728,7 +807,8 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                     emit_task(&app, &t);
                 }
             }
-        }
+        })
+        .await;
     }
 
     let exit = child.wait().await;
@@ -761,14 +841,15 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             finish_history(&app, &t, &settings, true).await;
         }
     } else {
-        let error = stderr_tail
+        let raw_error = stderr_tail
             .iter()
             .rev()
             .find(|l| l.contains("ERROR"))
             .cloned()
             .or_else(|| stderr_tail.back().cloned())
             .unwrap_or_else(|| "yt-dlp exited with an error".into());
-        let error = friendly_error(&error);
+        let failure = classify_failure(&raw_error);
+        let error = friendly_error(&raw_error, failure);
 
         if task.retry_count < settings.auto_retry_limit {
             // Some failures (file locked by AV scan, a brief network blip)
@@ -776,38 +857,29 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             // for those. A short pause gives whatever held the file/network
             // a moment to clear.
             //
-            // A write failure right at "[download] Destination: ..." with no
-            // progress at all looks like write contention — several tasks'
-            // concurrent-fragment threads landing on the same folder at once
-            // — rather than a real per-video problem. Retrying that case
-            // without concurrent fragments removes the likely trigger, and
-            // gets a longer pause so the rest of the batch has time to ease off.
-            let lower = error.to_lowercase();
-            let looks_like_write_contention = lower.contains("errno 22")
-                || lower.contains("invalid argument")
-                || lower.contains("unable to open for writing")
-                || lower.contains("unable to download video");
-            let delay = if looks_like_write_contention { 6 } else { 3 };
+            // What went wrong decides what the retry should do differently.
+            let (delay, note) = match failure {
+                FailureKind::Refused => (8, " with yt-dlp's default player clients"),
+                FailureKind::Write => (6, " without concurrent fragments"),
+                FailureKind::Other => (3, ""),
+            };
             push_log(
                 &app,
                 &task.id,
                 format!(
-                    "Auto-retrying ({}/{}){}…",
+                    "Auto-retrying ({}/{}){note}…",
                     task.retry_count + 1,
                     settings.auto_retry_limit,
-                    if looks_like_write_contention {
-                        " without concurrent fragments"
-                    } else {
-                        ""
-                    }
                 ),
             );
             tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
             with_task(&app, &task.id, |t| {
                 t.status = TaskStatus::Queued;
                 t.retry_count += 1;
-                if looks_like_write_contention {
-                    t.force_single_connection = true;
+                match failure {
+                    FailureKind::Refused => t.use_default_player_client = true,
+                    FailureKind::Write => t.force_single_connection = true,
+                    FailureKind::Other => {}
                 }
                 t.progress = 0.0;
                 t.downloaded_bytes = 0;
@@ -831,22 +903,50 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     pump(&app);
 }
 
+/// Why an attempt failed, in the only terms a retry can act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureKind {
+    /// The server turned down the extracted media URL (403/429). That URL is
+    /// spent — only a fresh extraction can help.
+    Refused,
+    /// yt-dlp could not open the output file, typically several tasks'
+    /// fragment threads writing into the same folder at once.
+    Write,
+    Other,
+}
+
+fn classify_failure(error: &str) -> FailureKind {
+    let lower = error.to_lowercase();
+    if lower.contains("http error 403")
+        || lower.contains("403: forbidden")
+        || lower.contains("http error 429")
+        || lower.contains("too many requests")
+    {
+        FailureKind::Refused
+    } else if lower.contains("unable to open for writing")
+        || lower.contains("errno 22")
+        || lower.contains("invalid argument")
+    {
+        FailureKind::Write
+    } else {
+        FailureKind::Other
+    }
+}
+
 /// Append an actionable hint to error patterns we can actually explain,
 /// so the failure isn't just an opaque yt-dlp exception.
-fn friendly_error(error: &str) -> String {
-    let lower = error.to_lowercase();
-    let hint = if lower.contains("errno 22") || lower.contains("invalid argument") {
-        Some(
-            "Usually a Windows console encoding issue with non-Latin titles (should now be fixed) \
-             or an output path/filename that's too long — try a shorter download folder path.",
-        )
-    } else if lower.contains("http error 403") || lower.contains("403: forbidden") {
-        Some(
-            "Often caused by an outdated yt-dlp — update it on the Components page. If that \
-             doesn't help, the site may need cookies (Settings → Cookies) or is rate-limiting you.",
-        )
-    } else {
-        None
+fn friendly_error(error: &str, failure: FailureKind) -> String {
+    let hint = match failure {
+        FailureKind::Write => Some(
+            "Usually an output path or filename that's too long — try a shorter download \
+             folder path, or turn on ASCII-only filenames in Settings.",
+        ),
+        FailureKind::Refused => Some(
+            "YouTube refused the media URL. Retrying re-extracts it, which normally clears \
+             this; if it keeps happening, update yt-dlp on the Components page, lower the \
+             parallel-download count, or add cookies (Settings → Cookies).",
+        ),
+        FailureKind::Other => None,
     };
     match hint {
         Some(h) => format!("{error}\n\n{h}"),

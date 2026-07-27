@@ -100,6 +100,11 @@ pub struct DownloadTask {
     /// fragment threads each) are a likely trigger.
     #[serde(default)]
     pub force_single_connection: bool,
+    /// Set by an auto-retry after the server refused the media URL (403/429):
+    /// re-extract through yt-dlp's own player clients rather than the pinned
+    /// ones, so this attempt gets URLs that haven't already been rejected.
+    #[serde(default)]
+    pub use_default_player_client: bool,
     pub options: DownloadOptions,
 }
 

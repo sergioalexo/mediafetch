@@ -72,10 +72,11 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
 
     let mut cmd = tokio::process::Command::new(&ytdlp);
     // Force UTF-8 stdio — piped output otherwise falls back to the OS ANSI
-    // codepage, which crashes on non-Latin titles (see downloader.rs).
+    // codepage, which mangles non-Latin titles and leaves the JSON below
+    // undecodable (see downloader.rs).
     cmd.env("PYTHONUTF8", "1");
     cmd.env("PYTHONIOENCODING", "utf-8");
-    cmd.args(["-J", "--flat-playlist", "--no-warnings"]);
+    cmd.args(["-J", "--flat-playlist", "--no-warnings", "--encoding", "utf-8"]);
     if !settings.proxy.is_empty() {
         cmd.args(["--proxy", &settings.proxy]);
     }

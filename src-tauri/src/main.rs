@@ -69,7 +69,7 @@ async fn analyze_url(app: AppHandle, url: String) -> Result<metadata::AnalyzeRes
 fn preview_command(app: AppHandle, state: State<AppState>, options: DownloadOptions) -> Result<String, String> {
     let settings = state.settings.lock().unwrap().clone();
     let ytdlp = binaries::ytdlp_path(&app)?;
-    let args = downloader::build_args(&app, &options, &settings, false)?;
+    let args = downloader::build_args(&app, &options, &settings, Default::default())?;
     let quoted: Vec<String> = args
         .iter()
         .map(|a| {
@@ -120,6 +120,7 @@ fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) 
                 playlist_count: None,
                 retry_count: 0,
                 force_single_connection: false,
+                use_default_player_client: false,
                 options: opts,
             });
         }
@@ -265,6 +266,7 @@ fn retry_task(app: AppHandle, state: State<AppState>, id: String) {
                 t.completed_at = None;
                 t.retry_count = 0;
                 t.force_single_connection = false;
+                t.use_default_player_client = false;
             }
         }
     }
