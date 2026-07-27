@@ -21,6 +21,12 @@ pub struct Preset {
     pub subtitle_langs: Option<String>,
     #[serde(default)]
     pub embed_subs: Option<bool>,
+    /// Extra raw yt-dlp CLI arguments, shell-quoted (advanced).
+    #[serde(default)]
+    pub custom_ytdlp_args: Option<String>,
+    /// Extra raw ffmpeg arguments passed via --postprocessor-args (advanced).
+    #[serde(default)]
+    pub custom_ffmpeg_args: Option<String>,
 }
 
 fn default_audio_quality() -> String {
@@ -39,6 +45,8 @@ fn default_presets() -> Vec<Preset> {
             bitrate_mode: None,
             subtitle_langs: None,
             embed_subs: None,
+            custom_ytdlp_args: None,
+            custom_ffmpeg_args: None,
         },
         Preset {
             id: "audio-mp3".into(),
@@ -50,6 +58,8 @@ fn default_presets() -> Vec<Preset> {
             bitrate_mode: None,
             subtitle_langs: None,
             embed_subs: None,
+            custom_ytdlp_args: None,
+            custom_ffmpeg_args: None,
         },
     ]
 }
@@ -74,6 +84,23 @@ pub struct Settings {
     pub output_template: String,
     pub notifications: bool,
     pub concurrent_fragments: u32,
+    /// Retries for a whole download; 0 lets yt-dlp use its own default.
+    pub retries: u32,
+    /// Retries per fragment (DASH/HLS); 0 lets yt-dlp use its own default.
+    pub fragment_retries: u32,
+    /// Seconds to sleep between requests (throttling, helps avoid 403s); 0 = off.
+    pub sleep_requests: f64,
+    /// yt-dlp --impersonate target, e.g. "chrome"; empty = off.
+    pub impersonate: String,
+    /// Check for and install a newer yt-dlp automatically on startup.
+    pub auto_update_ytdlp: bool,
+    /// yt-dlp --restrict-filenames: ASCII-only filenames. Workaround for
+    /// Windows/Unicode filesystem errors on some setups; strips accents
+    /// instead of preserving them, so it's opt-in.
+    pub restrict_filenames: bool,
+    /// Automatically re-queue a failed download this many times before
+    /// leaving it Failed for the user to handle. 0 disables auto-retry.
+    pub auto_retry_limit: u32,
     pub theme: String,
     // Named per-download presets and the one selected as default.
     pub presets: Vec<Preset>,
@@ -105,6 +132,13 @@ impl Default for Settings {
             output_template: "%(artist,uploader)s - %(title)s.%(ext)s".into(),
             notifications: true,
             concurrent_fragments: 4,
+            retries: 0,
+            fragment_retries: 0,
+            sleep_requests: 0.0,
+            impersonate: String::new(),
+            auto_update_ytdlp: false,
+            restrict_filenames: false,
+            auto_retry_limit: 2,
             theme: "dark".into(),
             presets: default_presets(),
             default_preset_id: "video-best".into(),

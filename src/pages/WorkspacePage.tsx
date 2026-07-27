@@ -10,20 +10,24 @@ import {
   Link2,
   ListVideo,
   Loader2,
+  Pause,
   Pencil,
   Play,
   Plus,
+  Search,
+  Terminal,
   Trash2,
   X,
 } from "lucide-react";
-import type { DownloadTask, Preset } from "@/lib/types";
-import { useApp, type Draft } from "@/lib/store";
+import type { DownloadOptions, DownloadTask, Preset } from "@/lib/types";
+import { buildDraftItems, useApp, type Draft } from "@/lib/store";
 import { useT } from "@/lib/i18n";
-import { isAlreadyDownloaded, presetSummary } from "@/lib/presets";
-import { cn, extractUrls, formatDuration } from "@/lib/utils";
+import { isAlreadyDownloaded, optionsFromPreset, presetSummary, sourceAbrOf } from "@/lib/presets";
+import { cn, extractUrls, formatDuration, formatEta } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -35,6 +39,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { QueueItem } from "@/components/QueueItem";
 import { PresetDialog } from "@/components/PresetDialog";
+import { CommandPreviewDialog } from "@/components/CommandPreviewDialog";
 import * as api from "@/lib/api";
 
 export function WorkspacePage() {
@@ -51,6 +56,8 @@ export function WorkspacePage() {
   const [dragging, setDragging] = useState(false);
   const [editPreset, setEditPreset] = useState<Preset | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [queueFilter, setQueueFilter] = useState("");
+  const [dragTaskId, setDragTaskId] = useState<string | null>(null);
 
   const activePresetId = settings?.defaultPresetId ?? "";
   const presets = settings?.presets ?? [];
@@ -102,6 +109,46 @@ export function WorkspacePage() {
     }
     return rows;
   }, [queue]);
+
+  const filteredRendered = useMemo(() => {
+    const q = queueFilter.trim().toLowerCase();
+    if (!q) return rendered;
+    const matches = (task: DownloadTask) =>
+      task.title.toLowerCase().includes(q) || task.url.toLowerCase().includes(q);
+    return rendered.filter((row) => {
+      if (row.type === "single") return matches(row.task!);
+      const groupTasks = queue.filter((t) => t.options.groupId === row.groupId);
+      return groupTasks.some(matches) || (groupTasks[0]?.options.groupTitle ?? "")
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [rendered, queue, queueFilter]);
+
+  // Rough ETA across everything currently downloading — bytes remaining over
+  // combined active speed. Queued-but-not-started tasks aren't included since
+  // there's no reliable speed estimate for them yet.
+  const totalEta = useMemo(() => {
+    const active = queue.filter((t) => t.status === "downloading" && t.totalBytes > 0);
+    const remaining = active.reduce((s, t) => s + Math.max(0, t.totalBytes - t.downloadedBytes), 0);
+    const speed = active.reduce((s, t) => s + t.speed, 0);
+    return speed > 0 ? remaining / speed : null;
+  }, [queue]);
+
+  const pauseAll = () => {
+    for (const t of queue) {
+      if (t.status === "downloading" || t.status === "queued") void api.pauseTask(t.id);
+    }
+  };
+  const resumeAll = () => {
+    for (const t of queue) {
+      if (t.status === "paused") void api.resumeTask(t.id);
+    }
+  };
+
+  const reorderableId = (row: (typeof rendered)[number]): string | null =>
+    row.type === "single" && row.task && row.task.status !== "downloading" && !["completed", "failed", "cancelled"].includes(row.task.status)
+      ? row.task.id
+      : null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
@@ -232,19 +279,48 @@ export function WorkspacePage() {
       {/* Live queue + finished (persist until app restart) */}
       {queue.length > 0 && (
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">
-              {t("q.title")} · {queue.length}
-            </span>
-            {queue.some((t) => ["completed", "failed", "cancelled"].includes(t.status)) && (
-              <Button variant="ghost" size="sm" onClick={() => api.clearFinished()}>
-                <Trash2 className="h-3.5 w-3.5" /> {t("ws.clearDone")}
-              </Button>
-            )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <span>
+                {t("q.title")} · {queue.length}
+              </span>
+              {totalEta != null && <span>· {t("q.totalEta", { eta: formatEta(totalEta) })}</span>}
+            </div>
+            <div className="flex items-center gap-1.5">
+              {queue.some((t) => t.status === "downloading" || t.status === "queued") && (
+                <Button variant="ghost" size="sm" onClick={pauseAll}>
+                  <Pause className="h-3.5 w-3.5" /> {t("q.pauseAll")}
+                </Button>
+              )}
+              {queue.some((t) => t.status === "paused") && (
+                <Button variant="ghost" size="sm" onClick={resumeAll}>
+                  <Play className="h-3.5 w-3.5" /> {t("q.resumeAll")}
+                </Button>
+              )}
+              {queue.some((t) => ["completed", "failed", "cancelled"].includes(t.status)) && (
+                <Button variant="ghost" size="sm" onClick={() => api.clearFinished()}>
+                  <Trash2 className="h-3.5 w-3.5" /> {t("ws.clearDone")}
+                </Button>
+              )}
+            </div>
           </div>
+
+          {queue.length > 4 && (
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={queueFilter}
+                onChange={(e) => setQueueFilter(e.target.value)}
+                placeholder={t("q.search")}
+                className="h-8 pl-8 text-xs"
+              />
+            </div>
+          )}
+
           <AnimatePresence initial={false}>
-            {rendered.map((row) =>
-              row.type === "group" ? (
+            {filteredRendered.map((row) => {
+              const dragId = reorderableId(row);
+              return row.type === "group" ? (
                 <TaskGroup key={row.groupId} groupId={row.groupId!} />
               ) : (
                 <QueueItem
@@ -253,9 +329,30 @@ export function WorkspacePage() {
                   index={queue.indexOf(row.task!)}
                   count={queue.length}
                   compact
+                  dragProps={
+                    dragId
+                      ? {
+                          draggable: true,
+                          onDragStart: () => setDragTaskId(dragId),
+                          onDragOver: (e) => e.preventDefault(),
+                          onDrop: (e) => {
+                            e.preventDefault();
+                            if (dragTaskId && dragTaskId !== dragId) {
+                              void api.reorderTask(
+                                dragTaskId,
+                                queue.findIndex((t) => t.id === dragId)
+                              );
+                            }
+                            setDragTaskId(null);
+                          },
+                          onDragEnd: () => setDragTaskId(null),
+                          dragging: dragTaskId === dragId,
+                        }
+                      : undefined
+                  }
                 />
-              )
-            )}
+              );
+            })}
           </AnimatePresence>
         </div>
       )}
@@ -283,9 +380,36 @@ function DraftCard({ draft }: { draft: Draft }) {
   const downloadDraft = useApp((s) => s.downloadDraft);
   const addUrls = useApp((s) => s.addUrls);
   const t = useT();
+  const [previewOptions, setPreviewOptions] = useState<DownloadOptions | null>(null);
 
   const presets = settings?.presets ?? [];
   const isPlaylist = draft.result?.kind === "playlist";
+
+  const previewCommand = () => {
+    const items = buildDraftItems(useApp.getState, draft);
+    if (items[0]) setPreviewOptions(items[0]);
+  };
+
+  const downloadQuickAudio = () => {
+    if (!settings || !draft.result || isPlaylist) return;
+    const preset =
+      settings.presets.find((p) => p.kind === "audio") ??
+      settings.presets.find((p) => p.id === settings.defaultPresetId) ??
+      settings.presets[0];
+    if (!preset) return;
+    const opts = optionsFromPreset(
+      { ...preset, kind: "audio" },
+      {
+        url: draft.result.url,
+        title: draft.result.title,
+        thumbnail: draft.result.thumbnail,
+        sourceAbr: sourceAbrOf(draft.result),
+      },
+      t
+    );
+    void api.enqueue([opts]);
+    removeDraft(draft.id);
+  };
 
   const presetPicker = (
     <Select value={draft.presetId} onValueChange={(v) => setDraftPreset(draft.id, v)}>
@@ -365,6 +489,24 @@ function DraftCard({ draft }: { draft: Draft }) {
               )}
             </div>
           </div>
+          {presets.find((p) => p.id === draft.presetId)?.kind !== "audio" && (
+            <Button
+              variant="outline"
+              size="iconSm"
+              onClick={downloadQuickAudio}
+              title={t("tip.audioOnly")}
+            >
+              <AudioLines className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="iconSm"
+            onClick={previewCommand}
+            title={t("tip.previewCommand")}
+          >
+            <Terminal className="h-3.5 w-3.5" />
+          </Button>
           <Button size="sm" onClick={() => void downloadDraft(draft.id)} title={t("tip.downloadOne")}>
             <Download className="h-3.5 w-3.5" />
           </Button>
@@ -404,6 +546,15 @@ function DraftCard({ draft }: { draft: Draft }) {
               </div>
             </div>
             {presetPicker}
+            <Button
+              variant="ghost"
+              size="iconSm"
+              onClick={previewCommand}
+              disabled={draft.selected.length === 0}
+              title={t("tip.previewCommand")}
+            >
+              <Terminal className="h-3.5 w-3.5" />
+            </Button>
             <Button
               size="sm"
               onClick={() => void downloadDraft(draft.id)}
@@ -463,6 +614,8 @@ function DraftCard({ draft }: { draft: Draft }) {
           )}
         </div>
       )}
+
+      <CommandPreviewDialog options={previewOptions} onClose={() => setPreviewOptions(null)} />
     </motion.div>
   );
 }
@@ -470,10 +623,12 @@ function DraftCard({ draft }: { draft: Draft }) {
 /** A collapsible header for downloaded/queued tasks that share a playlist. */
 function TaskGroup({ groupId }: { groupId: string }) {
   const queue = useApp((s) => s.queue);
+  const t = useT();
   const [collapsed, setCollapsed] = useState(false);
   const tasks = queue.filter((t) => t.options.groupId === groupId);
   if (tasks.length === 0) return null;
   const done = tasks.filter((t) => t.status === "completed").length;
+  const failed = tasks.filter((t) => t.status === "failed").length;
   const title = tasks[0].options.groupTitle ?? "Playlist";
 
   return (
@@ -485,6 +640,11 @@ function TaskGroup({ groupId }: { groupId: string }) {
         {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         <ListVideo className="h-4 w-4 shrink-0 text-primary" />
         <span className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</span>
+        {failed > 0 && (
+          <Badge variant="destructive" className="shrink-0">
+            {t("q.failedCount", { n: failed })}
+          </Badge>
+        )}
         <Badge variant="secondary" className="shrink-0">
           {done}/{tasks.length}
         </Badge>

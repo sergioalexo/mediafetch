@@ -1,14 +1,17 @@
-import type { ReactNode } from "react";
+import { useState, type DragEvent, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowDown,
   ArrowUp,
   Bug,
+  Copy,
+  ExternalLink,
   FolderOpen,
   Music,
   Pause,
   Play,
   RotateCcw,
+  Terminal,
   Trash2,
   Video,
   X,
@@ -22,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { TaskLogDialog } from "@/components/TaskLogDialog";
 
 const STATUS_LABEL: Record<DownloadTask["status"], MsgKey> = {
   queued: "q.status.queued",
@@ -75,13 +79,24 @@ export function QueueItem({
   index,
   count,
   compact = false,
+  dragProps,
 }: {
   task: DownloadTask;
   index: number;
   count: number;
   compact?: boolean;
+  /** Native HTML5 drag-and-drop handlers for manual queue reordering. */
+  dragProps?: {
+    draggable?: boolean;
+    onDragStart?: () => void;
+    onDragOver?: (e: DragEvent<HTMLDivElement>) => void;
+    onDrop?: (e: DragEvent<HTMLDivElement>) => void;
+    onDragEnd?: () => void;
+    dragging?: boolean;
+  };
 }) {
   const t = useT();
+  const [showLog, setShowLog] = useState(false);
   const active = task.status === "downloading" || task.status === "postprocessing";
   const finished =
     task.status === "completed" || task.status === "failed" || task.status === "cancelled";
@@ -93,10 +108,16 @@ export function QueueItem({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.97 }}
       transition={{ type: "spring", stiffness: 500, damping: 40 }}
+      draggable={dragProps?.draggable}
+      onDragStart={dragProps?.onDragStart}
+      onDragOver={dragProps?.onDragOver}
+      onDrop={dragProps?.onDrop}
+      onDragEnd={dragProps?.onDragEnd}
       className={cn(
         "rounded-xl border bg-card shadow-sm",
         compact ? "p-2" : "p-3",
-        active && "border-primary/30"
+        active && "border-primary/30",
+        dragProps?.dragging && "opacity-50"
       )}
     >
       <div className={cn("flex", compact ? "gap-2.5" : "gap-3")}>
@@ -146,6 +167,12 @@ export function QueueItem({
             </div>
 
             <div className="flex shrink-0 items-center gap-0.5">
+              <IconButton tip={t("q.openLink")} onClick={() => void api.openExternal(task.url)}>
+                <ExternalLink className="h-3.5 w-3.5" />
+              </IconButton>
+              <IconButton tip={t("q.viewLog")} onClick={() => setShowLog(true)}>
+                <Terminal className="h-3.5 w-3.5" />
+              </IconButton>
               {index > 0 && !finished && task.status !== "downloading" && (
                 <IconButton tip={t("q.moveUp")} onClick={() => api.reorderTask(task.id, index - 1)}>
                   <ArrowUp className="h-3.5 w-3.5" />
@@ -230,12 +257,27 @@ export function QueueItem({
           )}
 
           {task.status === "failed" && task.error && (
-            <div className="mt-2 truncate rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive" title={task.error}>
-              {task.error}
+            <div className="mt-2 flex items-center gap-1.5 rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">
+              <span className="min-w-0 flex-1 select-text truncate" title={task.error}>
+                {task.error}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 opacity-70 hover:opacity-100"
+                title={t("q.copyError")}
+                onClick={() => void navigator.clipboard.writeText(task.error ?? "")}
+              >
+                <Copy className="h-3 w-3" />
+              </button>
             </div>
           )}
         </div>
       </div>
+      <TaskLogDialog
+        taskId={showLog ? task.id : null}
+        title={task.title || task.url}
+        onClose={() => setShowLog(false)}
+      />
     </motion.div>
   );
 }

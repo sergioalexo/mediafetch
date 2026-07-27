@@ -134,6 +134,8 @@ export function optionsFromPreset(
     thumbnail: ctx.thumbnail ?? null,
     groupId: ctx.groupId ?? null,
     groupTitle: ctx.groupTitle ?? null,
+    customYtdlpArgs: preset.customYtdlpArgs ?? null,
+    customFfmpegArgs: preset.customFfmpegArgs ?? null,
   };
 }
 

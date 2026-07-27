@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { FolderOpen, Music, Play, Search, Trash2, Video, X } from "lucide-react";
+import { ExternalLink, FolderOpen, Music, Play, Search, Trash2, Video, X } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
 import * as api from "@/lib/api";
@@ -100,6 +100,14 @@ export function HistoryPage() {
             </div>
             {h.status === "failed" && <Badge variant="destructive">{t("h.failed")}</Badge>}
             <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="iconSm" variant="ghost" onClick={() => void api.openExternal(h.url)}>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("q.openLink")}</TooltipContent>
+              </Tooltip>
               {h.filename && h.status === "completed" && (
                 <>
                   <Tooltip>

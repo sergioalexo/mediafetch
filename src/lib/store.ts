@@ -378,7 +378,7 @@ async function runAnalyze(get: Get, set: SetState, id: string) {
   }
 }
 
-function buildDraftItems(get: Get, draft: Draft): DownloadOptions[] {
+export function buildDraftItems(get: Get, draft: Draft): DownloadOptions[] {
   const s = get().settings;
   if (!s || !draft.result) return [];
   const preset =

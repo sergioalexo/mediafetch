@@ -71,6 +71,10 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
     let ytdlp = binaries::ytdlp_path(app)?;
 
     let mut cmd = tokio::process::Command::new(&ytdlp);
+    // Force UTF-8 stdio — piped output otherwise falls back to the OS ANSI
+    // codepage, which crashes on non-Latin titles (see downloader.rs).
+    cmd.env("PYTHONUTF8", "1");
+    cmd.env("PYTHONIOENCODING", "utf-8");
     cmd.args(["-J", "--flat-playlist", "--no-warnings"]);
     if !settings.proxy.is_empty() {
         cmd.args(["--proxy", &settings.proxy]);

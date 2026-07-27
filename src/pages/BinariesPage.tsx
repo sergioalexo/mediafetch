@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
 
@@ -387,6 +388,8 @@ export function BinariesPage() {
   const loading = useApp((s) => s.binariesLoading);
   const refresh = useApp((s) => s.refreshBinaries);
   const checkAppUpdate = useApp((s) => s.checkAppUpdate);
+  const settings = useApp((s) => s.settings);
+  const updateSettings = useApp((s) => s.updateSettings);
   const t = useT();
 
   return (
@@ -409,6 +412,21 @@ export function BinariesPage() {
           {t("c.checkUpdates")}
         </Button>
       </div>
+
+      {settings && (
+        <Card>
+          <CardContent className="flex items-center justify-between gap-6 p-4">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{t("c.autoUpdateYtdlp")}</div>
+              <div className="text-xs text-muted-foreground">{t("c.autoUpdateYtdlpHint")}</div>
+            </div>
+            <Switch
+              checked={settings.autoUpdateYtdlp}
+              onCheckedChange={(v) => void updateSettings({ autoUpdateYtdlp: v })}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       <div className="space-y-3">
         <AppUpdateCard />

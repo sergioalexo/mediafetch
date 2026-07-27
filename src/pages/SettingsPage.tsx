@@ -176,6 +176,25 @@ export function SettingsPage() {
               onCheckedChange={(v) => set({ notifications: v })}
             />
           </Row>
+          <Row label={t("set.restrictFilenames")} hint={t("set.restrictFilenamesHint")}>
+            <Switch
+              checked={settings.restrictFilenames}
+              onCheckedChange={(v) => set({ restrictFilenames: v })}
+            />
+          </Row>
+          <Row
+            label={t("set.autoRetry")}
+            hint={t("set.autoRetryHint", { n: settings.autoRetryLimit })}
+          >
+            <Slider
+              className="w-40"
+              min={0}
+              max={5}
+              step={1}
+              value={[settings.autoRetryLimit]}
+              onValueChange={([v]) => set({ autoRetryLimit: v })}
+            />
+          </Row>
         </CardContent>
       </Card>
 
@@ -404,6 +423,55 @@ export function SettingsPage() {
               value={[settings.concurrentFragments]}
               onValueChange={([v]) => set({ concurrentFragments: v })}
             />
+          </Row>
+          <Row label={t("set.retries")} hint={t("set.retriesHint")}>
+            <Input
+              type="number"
+              min={0}
+              className="w-24 font-mono text-xs"
+              value={settings.retries}
+              onChange={(e) => set({ retries: Math.max(0, Number(e.target.value) || 0) })}
+              placeholder={t("set.auto")}
+            />
+          </Row>
+          <Row label={t("set.fragmentRetries")} hint={t("set.fragmentRetriesHint")}>
+            <Input
+              type="number"
+              min={0}
+              className="w-24 font-mono text-xs"
+              value={settings.fragmentRetries}
+              onChange={(e) =>
+                set({ fragmentRetries: Math.max(0, Number(e.target.value) || 0) })
+              }
+              placeholder={t("set.auto")}
+            />
+          </Row>
+          <Row label={t("set.sleepRequests")} hint={t("set.sleepRequestsHint")}>
+            <Input
+              type="number"
+              min={0}
+              step={0.5}
+              className="w-24 font-mono text-xs"
+              value={settings.sleepRequests}
+              onChange={(e) => set({ sleepRequests: Math.max(0, Number(e.target.value) || 0) })}
+              placeholder={t("set.unlimited")}
+            />
+          </Row>
+          <Row label={t("set.impersonate")} hint={t("set.impersonateHint")}>
+            <Select
+              value={settings.impersonate || "none"}
+              onValueChange={(v) => set({ impersonate: v === "none" ? "" : v })}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{t("set.sbOff")}</SelectItem>
+                <SelectItem value="chrome">Chrome</SelectItem>
+                <SelectItem value="edge">Edge</SelectItem>
+                <SelectItem value="safari">Safari</SelectItem>
+              </SelectContent>
+            </Select>
           </Row>
         </CardContent>
       </Card>

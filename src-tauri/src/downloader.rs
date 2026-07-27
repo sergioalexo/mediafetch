@@ -15,6 +15,9 @@ pub struct AppState {
     pub queue: Mutex<Vec<DownloadTask>>,
     pub pids: Mutex<HashMap<String, u32>>,
     pub settings: Mutex<Settings>,
+    /// Full stdout/stderr transcript per task, for the log viewer. Capped
+    /// per task so a very long download can't grow this unbounded.
+    pub logs: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl AppState {
@@ -23,8 +26,50 @@ impl AppState {
             queue: Mutex::new(Vec::new()),
             pids: Mutex::new(HashMap::new()),
             settings: Mutex::new(settings),
+            logs: Mutex::new(HashMap::new()),
         }
     }
+}
+
+const LOG_CAP: usize = 5000;
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskLogLine {
+    id: String,
+    line: String,
+}
+
+/// Append one line to a task's transcript and notify any open log viewer.
+fn push_log(app: &AppHandle, id: &str, line: String) {
+    let state = app.state::<AppState>();
+    {
+        let mut logs = state.logs.lock().unwrap();
+        let buf = logs.entry(id.to_string()).or_default();
+        buf.push(line.clone());
+        if buf.len() > LOG_CAP {
+            let excess = buf.len() - LOG_CAP;
+            buf.drain(0..excess);
+        }
+    }
+    let _ = app.emit(
+        "task-log",
+        &TaskLogLine {
+            id: id.to_string(),
+            line,
+        },
+    );
+}
+
+pub fn get_log(app: &AppHandle, id: &str) -> Vec<String> {
+    let state = app.state::<AppState>();
+    let logs = state.logs.lock().unwrap();
+    logs.get(id).cloned().unwrap_or_default()
+}
+
+pub fn clear_log(app: &AppHandle, id: &str) {
+    let state = app.state::<AppState>();
+    state.logs.lock().unwrap().remove(id);
 }
 
 const PROGRESS_TEMPLATE: &str = "download:MFPROG|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.playlist_index)s|%(info.playlist_count)s|%(info.title)s";
@@ -80,6 +125,17 @@ pub fn kill_tree(pid: u32) {
         .output();
 }
 
+/// yt-dlp is a frozen Python interpreter. When its stdout/stderr are piped
+/// (not attached to a real console, as ours always are) Python falls back to
+/// the OS ANSI codepage instead of UTF-8 for text I/O. On Windows that's
+/// usually cp1252, which can't encode most non-Latin video titles — writing
+/// one then crashes with "OSError: [Errno 22] Invalid argument". Forcing
+/// UTF-8 mode avoids that regardless of title language or system locale.
+fn force_utf8_io(cmd: &mut tokio::process::Command) {
+    cmd.env("PYTHONUTF8", "1");
+    cmd.env("PYTHONIOENCODING", "utf-8");
+}
+
 pub fn kill_task_process(app: &AppHandle, id: &str) {
     let state = app.state::<AppState>();
     let pid = state.pids.lock().unwrap().remove(id);
@@ -132,13 +188,12 @@ pub fn pump(app: &AppHandle) {
     }
 }
 
-fn build_args(
+pub fn build_args(
     app: &AppHandle,
-    task: &DownloadTask,
+    opts: &DownloadOptions,
     settings: &Settings,
 ) -> Result<Vec<String>, String> {
     let mut args: Vec<String> = Vec::new();
-    let opts = &task.options;
     let is_audio = opts.kind == "audio";
 
     args.extend([
@@ -149,6 +204,20 @@ fn build_args(
         "--progress-template".into(),
         PP_TEMPLATE.into(),
     ]);
+
+    // Sanitize titles into valid Windows filenames and cap the filename
+    // length — long titles combined with a deep download folder otherwise
+    // blow past MAX_PATH and yt-dlp fails with "OSError: [Errno 22]
+    // Invalid argument" when it tries to open the file.
+    #[cfg(windows)]
+    args.extend(["--windows-filenames".into(), "--trim-filenames".into(), "150".into()]);
+
+    // Opt-in workaround: transliterate to ASCII instead of keeping accents.
+    // Some Windows setups still fail to write non-ASCII filenames even with
+    // --windows-filenames and UTF-8 I/O forced; this sidesteps that entirely.
+    if settings.restrict_filenames {
+        args.push("--restrict-filenames".into());
+    }
 
     // Output location
     std::fs::create_dir_all(&settings.download_dir).map_err(|e| e.to_string())?;
@@ -178,6 +247,18 @@ fn build_args(
     }
     if !settings.proxy.trim().is_empty() {
         args.extend(["--proxy".into(), settings.proxy.trim().to_string()]);
+    }
+    if settings.retries > 0 {
+        args.extend(["--retries".into(), settings.retries.to_string()]);
+    }
+    if settings.fragment_retries > 0 {
+        args.extend(["--fragment-retries".into(), settings.fragment_retries.to_string()]);
+    }
+    if settings.sleep_requests > 0.0 {
+        args.extend(["--sleep-requests".into(), settings.sleep_requests.to_string()]);
+    }
+    if !settings.impersonate.trim().is_empty() {
+        args.extend(["--impersonate".into(), settings.impersonate.trim().to_string()]);
     }
     if !settings.cookies_file.is_empty() {
         args.extend(["--cookies".into(), settings.cookies_file.clone()]);
@@ -308,8 +389,74 @@ fn build_args(
         }
     }
 
+    // Advanced/custom passthrough, set per-preset.
+    if let Some(extra) = opts.custom_ffmpeg_args.as_deref().filter(|s| !s.trim().is_empty()) {
+        args.push("--postprocessor-args".into());
+        args.push(format!("ffmpeg:{}", extra.trim()));
+    }
+    if let Some(extra) = opts.custom_ytdlp_args.as_deref().filter(|s| !s.trim().is_empty()) {
+        args.extend(shell_split(extra).map_err(|e| format!("Custom yt-dlp arguments: {e}"))?);
+    }
+
     args.push("--".into());
     args.push(opts.url.clone());
+    Ok(args)
+}
+
+/// Minimal POSIX-ish shell tokenizer for user-supplied CLI arguments: splits
+/// on whitespace, honours single/double quotes and backslash escapes. Good
+/// enough for yt-dlp flag values that contain spaces (e.g. extractor-args).
+fn shell_split(input: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_token = false;
+    let mut quote: Option<char> = None;
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                } else if c == '\\' && q == '"' {
+                    if let Some(&next) = chars.peek() {
+                        if next == '"' || next == '\\' {
+                            current.push(chars.next().unwrap());
+                            continue;
+                        }
+                    }
+                    current.push(c);
+                } else {
+                    current.push(c);
+                }
+            }
+            None => {
+                if c.is_whitespace() {
+                    if in_token {
+                        args.push(std::mem::take(&mut current));
+                        in_token = false;
+                    }
+                } else if c == '\'' || c == '"' {
+                    quote = Some(c);
+                    in_token = true;
+                } else if c == '\\' {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                        in_token = true;
+                    }
+                } else {
+                    current.push(c);
+                    in_token = true;
+                }
+            }
+        }
+    }
+    if quote.is_some() {
+        return Err("unterminated quote".into());
+    }
+    if in_token {
+        args.push(current);
+    }
     Ok(args)
 }
 
@@ -349,6 +496,7 @@ fn cbr_bitrate(source_abr: Option<f64>) -> u32 {
 async fn probe_abr(app: &AppHandle, url: &str, settings: &Settings) -> Option<f64> {
     let ytdlp = binaries::ytdlp_path(app).ok()?;
     let mut cmd = tokio::process::Command::new(&ytdlp);
+    force_utf8_io(&mut cmd);
     cmd.args([
         "--print",
         "%(abr)s|%(tbr)s",
@@ -416,7 +564,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             return;
         }
     };
-    let args = match build_args(&app, &task, &settings) {
+    let args = match build_args(&app, &task.options, &settings) {
         Ok(a) => a,
         Err(e) => {
             fail_task(&app, &task, &settings, e).await;
@@ -425,6 +573,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     };
 
     let mut cmd = tokio::process::Command::new(&ytdlp);
+    force_utf8_io(&mut cmd);
     cmd.args(&args);
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
@@ -447,17 +596,26 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         state.pids.lock().unwrap().insert(task.id.clone(), pid);
     }
 
-    // Collect stderr in the background for error reporting.
+    // Fresh transcript for this run — a retry shouldn't mix in the previous
+    // attempt's output.
+    clear_log(&app, &task.id);
+    push_log(&app, &task.id, format!("$ {} {}", ytdlp.to_string_lossy(), args.join(" ")));
+
+    // Collect stderr in the background for error reporting, and mirror every
+    // line into the shared transcript so the log viewer sees it live.
     let stderr = child.stderr.take();
+    let stderr_app = app.clone();
+    let stderr_id = task.id.clone();
     let stderr_task = tauri::async_runtime::spawn(async move {
         let mut tail: VecDeque<String> = VecDeque::with_capacity(16);
         if let Some(stderr) = stderr {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if tail.len() >= 15 {
-                    tail.pop_front();
-                }
                 if !line.trim().is_empty() {
+                    push_log(&stderr_app, &stderr_id, line.clone());
+                    if tail.len() >= 15 {
+                        tail.pop_front();
+                    }
                     tail.push_back(line);
                 }
             }
@@ -482,6 +640,12 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             let line = line.trim_end();
             let mut updated: Option<DownloadTask> = None;
             let mut force_emit = false;
+
+            // The two progress-template markers are internal bookkeeping,
+            // not real yt-dlp output — everything else is worth logging.
+            if !line.is_empty() && !line.starts_with("MFPROG|") && !line.starts_with("MFPP") {
+                push_log(&app, &task.id, line.to_string());
+            }
 
             if let Some(rest) = line.strip_prefix("MFPROG|") {
                 let fields: Vec<&str> = rest.splitn(8, '|').collect();
@@ -585,13 +749,33 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             .cloned()
             .or_else(|| stderr_tail.back().cloned())
             .unwrap_or_else(|| "yt-dlp exited with an error".into());
-        let done = with_task(&app, &task.id, |t| {
-            t.status = TaskStatus::Failed;
-            t.error = Some(error.clone());
-            t.completed_at = Some(now_unix());
-        });
-        if let Some(t) = done {
-            finish_history(&app, &t, &settings, false).await;
+        let error = friendly_error(&error);
+
+        if task.retry_count < settings.auto_retry_limit {
+            // Some failures (file locked by AV scan, a brief network blip)
+            // reliably succeed on a plain retry — don't make the user click
+            // for those. A short pause gives whatever held the file/network
+            // a moment to clear.
+            push_log(&app, &task.id, format!("Auto-retrying ({}/{})…", task.retry_count + 1, settings.auto_retry_limit));
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            with_task(&app, &task.id, |t| {
+                t.status = TaskStatus::Queued;
+                t.retry_count += 1;
+                t.progress = 0.0;
+                t.downloaded_bytes = 0;
+                t.speed = 0.0;
+                t.eta = 0.0;
+                t.error = Some(error.clone());
+            });
+        } else {
+            let done = with_task(&app, &task.id, |t| {
+                t.status = TaskStatus::Failed;
+                t.error = Some(error.clone());
+                t.completed_at = Some(now_unix());
+            });
+            if let Some(t) = done {
+                finish_history(&app, &t, &settings, false).await;
+            }
         }
     }
 
@@ -599,7 +783,32 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     pump(&app);
 }
 
+/// Append an actionable hint to error patterns we can actually explain,
+/// so the failure isn't just an opaque yt-dlp exception.
+fn friendly_error(error: &str) -> String {
+    let lower = error.to_lowercase();
+    let hint = if lower.contains("errno 22") || lower.contains("invalid argument") {
+        Some(
+            "Usually a Windows console encoding issue with non-Latin titles (should now be fixed) \
+             or an output path/filename that's too long — try a shorter download folder path.",
+        )
+    } else if lower.contains("http error 403") || lower.contains("403: forbidden") {
+        Some(
+            "Often caused by an outdated yt-dlp — update it on the Components page. If that \
+             doesn't help, the site may need cookies (Settings → Cookies) or is rate-limiting you.",
+        )
+    } else {
+        None
+    };
+    match hint {
+        Some(h) => format!("{error}\n\n{h}"),
+        None => error.to_string(),
+    }
+}
+
 async fn fail_task(app: &AppHandle, task: &DownloadTask, settings: &Settings, error: String) {
+    clear_log(app, &task.id);
+    push_log(app, &task.id, error.clone());
     let done = with_task(app, &task.id, |t| {
         t.status = TaskStatus::Failed;
         t.error = Some(error);

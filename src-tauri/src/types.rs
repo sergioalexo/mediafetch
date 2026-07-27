@@ -63,6 +63,12 @@ pub struct DownloadOptions {
     pub group_id: Option<String>,
     #[serde(default)]
     pub group_title: Option<String>,
+    /// Extra raw yt-dlp CLI arguments, shell-quoted (advanced).
+    #[serde(default)]
+    pub custom_ytdlp_args: Option<String>,
+    /// Extra raw ffmpeg arguments passed via --postprocessor-args (advanced).
+    #[serde(default)]
+    pub custom_ffmpeg_args: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +91,9 @@ pub struct DownloadTask {
     pub completed_at: Option<u64>,
     pub playlist_index: Option<u32>,
     pub playlist_count: Option<u32>,
+    /// Number of automatic retries already attempted for this task.
+    #[serde(default)]
+    pub retry_count: u32,
     pub options: DownloadOptions,
 }
 

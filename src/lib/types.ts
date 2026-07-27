@@ -57,6 +57,10 @@ export interface DownloadOptions {
   /** Shared id for tasks from the same analyzed playlist (collapsible group). */
   groupId?: string | null;
   groupTitle?: string | null;
+  /** Extra raw yt-dlp CLI arguments, shell-quoted (advanced). */
+  customYtdlpArgs?: string | null;
+  /** Extra raw ffmpeg arguments passed via --postprocessor-args (advanced). */
+  customFfmpegArgs?: string | null;
 }
 
 export interface Preset {
@@ -71,6 +75,10 @@ export interface Preset {
   bitrateMode?: BitrateMode | null;
   subtitleLangs?: string | null;
   embedSubs?: boolean | null;
+  /** Extra raw yt-dlp CLI arguments, shell-quoted (advanced). */
+  customYtdlpArgs?: string | null;
+  /** Extra raw ffmpeg arguments passed via --postprocessor-args (advanced). */
+  customFfmpegArgs?: string | null;
 }
 
 export interface DownloadTask {
@@ -91,6 +99,8 @@ export interface DownloadTask {
   completedAt?: number | null;
   playlistIndex?: number | null;
   playlistCount?: number | null;
+  /** Automatic retries already attempted for this task. */
+  retryCount: number;
   options: DownloadOptions;
 }
 
@@ -112,6 +122,20 @@ export interface Settings {
   outputTemplate: string;
   notifications: boolean;
   concurrentFragments: number;
+  /** Whole-download retries; 0 lets yt-dlp use its own default. */
+  retries: number;
+  /** Per-fragment retries (DASH/HLS); 0 lets yt-dlp use its own default. */
+  fragmentRetries: number;
+  /** Seconds to sleep between requests (throttling); 0 = off. */
+  sleepRequests: number;
+  /** yt-dlp --impersonate target, e.g. "chrome"; empty = off. */
+  impersonate: string;
+  /** Check for and install a newer yt-dlp automatically on startup. */
+  autoUpdateYtdlp: boolean;
+  /** ASCII-only filenames (yt-dlp --restrict-filenames) — workaround for Unicode/Windows errors. */
+  restrictFilenames: boolean;
+  /** Auto re-queue a failed download this many times before leaving it Failed. 0 disables. */
+  autoRetryLimit: number;
   theme: "dark" | "light";
   presets: Preset[];
   defaultPresetId: string;

@@ -7,6 +7,7 @@ import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,8 @@ export function PresetDialog({
   const [audioFormat, setAudioFormat] = useState<AudioFormat>("mp3");
   const [audioQuality, setAudioQuality] = useState<AudioQuality>("match");
   const [subLangs, setSubLangs] = useState("");
+  const [customYtdlpArgs, setCustomYtdlpArgs] = useState("");
+  const [customFfmpegArgs, setCustomFfmpegArgs] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -47,6 +50,8 @@ export function PresetDialog({
     setAudioFormat(preset?.audioFormat ?? "mp3");
     setAudioQuality(preset ? presetAudioQuality(preset) : "match");
     setSubLangs(preset?.subtitleLangs ?? "");
+    setCustomYtdlpArgs(preset?.customYtdlpArgs ?? "");
+    setCustomFfmpegArgs(preset?.customFfmpegArgs ?? "");
   }, [open, preset]);
 
   if (!settings) return null;
@@ -62,6 +67,8 @@ export function PresetDialog({
       audioQuality,
       subtitleLangs: kind === "video" && subLangs.trim() ? subLangs.trim() : null,
       embedSubs: kind === "video" && subLangs.trim() ? true : null,
+      customYtdlpArgs: customYtdlpArgs.trim() || null,
+      customFfmpegArgs: customFfmpegArgs.trim() || null,
     };
     const presets = preset
       ? settings.presets.map((p) => (p.id === preset.id ? next : p))
@@ -123,6 +130,30 @@ export function PresetDialog({
               onQualityChange={setAudioQuality}
             />
           )}
+
+          <div className="space-y-3 border-t pt-3">
+            <p className="text-xs font-medium text-muted-foreground">{t("pd.advanced")}</p>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">{t("pd.customYtdlp")}</Label>
+              <Textarea
+                className="min-h-[44px] font-mono text-xs"
+                value={customYtdlpArgs}
+                onChange={(e) => setCustomYtdlpArgs(e.target.value)}
+                placeholder="--extractor-args youtube:player_client=web,default"
+              />
+              <p className="text-[11px] text-muted-foreground">{t("pd.customYtdlpHint")}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">{t("pd.customFfmpeg")}</Label>
+              <Textarea
+                className="min-h-[44px] font-mono text-xs"
+                value={customFfmpegArgs}
+                onChange={(e) => setCustomFfmpegArgs(e.target.value)}
+                placeholder="-vf scale=1280:-2"
+              />
+              <p className="text-[11px] text-muted-foreground">{t("pd.customFfmpegHint")}</p>
+            </div>
+          </div>
         </div>
 
         <DialogFooter className="justify-between">

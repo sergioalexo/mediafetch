@@ -18,9 +18,12 @@ export const pickCookiesFile = () => invoke<string | null>("pick_cookies_file");
 
 // ---- URL analysis ----
 export const analyzeUrl = (url: string) => invoke<AnalyzeResult>("analyze_url", { url });
+export const previewCommand = (options: DownloadOptions) =>
+  invoke<string>("preview_command", { options });
 
 // ---- Queue ----
 export const getQueue = () => invoke<DownloadTask[]>("get_queue");
+export const getTaskLog = (id: string) => invoke<string[]>("get_task_log", { id });
 export const enqueue = (items: DownloadOptions[]) =>
   invoke<void>("enqueue", { items });
 export const pauseTask = (id: string) => invoke<void>("pause_task", { id });

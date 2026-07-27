@@ -62,11 +62,37 @@ async fn analyze_url(app: AppHandle, url: String) -> Result<metadata::AnalyzeRes
     metadata::analyze(&app, &url, &settings).await
 }
 
+/// Preview the exact yt-dlp command line a download would run, without
+/// starting it — lets you sanity-check a preset (including custom args)
+/// before committing to a download.
+#[tauri::command]
+fn preview_command(app: AppHandle, state: State<AppState>, options: DownloadOptions) -> Result<String, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let ytdlp = binaries::ytdlp_path(&app)?;
+    let args = downloader::build_args(&app, &options, &settings)?;
+    let quoted: Vec<String> = args
+        .iter()
+        .map(|a| {
+            if a.is_empty() || a.chars().any(char::is_whitespace) {
+                format!("\"{}\"", a.replace('"', "\\\""))
+            } else {
+                a.clone()
+            }
+        })
+        .collect();
+    Ok(format!("{} {}", ytdlp.to_string_lossy(), quoted.join(" ")))
+}
+
 // ---------- Queue ----------
 
 #[tauri::command]
 fn get_queue(state: State<AppState>) -> Vec<DownloadTask> {
     state.queue.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn get_task_log(app: AppHandle, id: String) -> Vec<String> {
+    downloader::get_log(&app, &id)
 }
 
 #[tauri::command]
@@ -92,6 +118,7 @@ fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) 
                 completed_at: None,
                 playlist_index: None,
                 playlist_count: None,
+                retry_count: 0,
                 options: opts,
             });
         }
@@ -179,6 +206,7 @@ fn retry_task(app: AppHandle, state: State<AppState>, id: String) {
                 t.eta = 0.0;
                 t.error = None;
                 t.completed_at = None;
+                t.retry_count = 0;
             }
         }
     }
@@ -211,6 +239,7 @@ fn remove_task(app: AppHandle, state: State<AppState>, id: String) {
         let mut q = state.queue.lock().unwrap();
         q.retain(|t| t.id != id);
     }
+    downloader::clear_log(&app, &id);
     downloader::emit_queue(&app);
     downloader::pump(&app);
 }
@@ -230,14 +259,17 @@ fn reorder_task(app: AppHandle, state: State<AppState>, id: String, new_index: u
 
 #[tauri::command]
 fn clear_finished(app: AppHandle, state: State<AppState>) {
-    {
-        let mut q = state.queue.lock().unwrap();
-        q.retain(|t| {
-            !matches!(
-                t.status,
-                TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
-            )
-        });
+    let mut q = state.queue.lock().unwrap();
+    let (finished, remaining): (Vec<_>, Vec<_>) = q.drain(..).partition(|t| {
+        matches!(
+            t.status,
+            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+        )
+    });
+    *q = remaining;
+    drop(q);
+    for t in finished {
+        downloader::clear_log(&app, &t.id);
     }
     downloader::emit_queue(&app);
 }
@@ -387,11 +419,40 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_window_event(|window, event| {
+            // yt-dlp/ffmpeg children are plain OS processes, not tied to our
+            // process lifetime — without this they keep running orphaned
+            // after the window (and app) closes.
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let app = window.app_handle();
+                let state = app.state::<AppState>();
+                let pids: Vec<u32> = state.pids.lock().unwrap().values().copied().collect();
+                for pid in pids {
+                    downloader::kill_tree(pid);
+                }
+            }
+        })
         .setup(|app| {
             let handle = app.handle().clone();
             notify::register_app_identity(&handle);
             let loaded = settings::load(&handle);
+            let auto_update = loaded.auto_update_ytdlp;
             app.manage(AppState::new(loaded));
+
+            if auto_update {
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Only touch a copy we manage ourselves — never overwrite
+                    // a system-installed yt-dlp the user put on their PATH.
+                    let statuses = binaries::get_status(&handle, true).await;
+                    if let Some(s) = statuses
+                        .iter()
+                        .find(|s| s.name == binaries::YTDLP && s.managed && s.update_available)
+                    {
+                        let _ = binaries::install(&handle, &s.name, None).await;
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -400,7 +461,9 @@ fn main() {
             pick_download_dir,
             pick_cookies_file,
             analyze_url,
+            preview_command,
             get_queue,
+            get_task_log,
             enqueue,
             pause_task,
             resume_task,
