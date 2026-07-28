@@ -7,6 +7,7 @@ import type {
   BinaryStatus,
   DownloadOptions,
   DownloadTask,
+  Engine,
   HistoryEntry,
   Preset,
   Settings,
@@ -15,8 +16,10 @@ import * as api from "./api";
 import { translate, type MsgKey } from "./i18n";
 import {
   isAlreadyDownloaded,
+  isFetchAll,
   optionsFromPreset,
   presetIdForUrl,
+  resolveEngine,
   sourceAbrOf,
 } from "./presets";
 import { extractUrls } from "./utils";
@@ -378,17 +381,86 @@ async function runAnalyze(get: Get, set: SetState, id: string) {
   }
 }
 
+/** The preset a draft will actually download with. */
+function presetForDraft(s: Settings, draft: Draft): Preset | null {
+  return (
+    s.presets.find((p) => p.id === draft.presetId) ??
+    s.presets.find((p) => p.id === s.defaultPresetId) ??
+    s.presets[0] ??
+    null
+  );
+}
+
+/**
+ * How a draft will be queued, decided in one place so the Workspace's counts
+ * and labels can't drift from what actually gets enqueued.
+ */
+export function draftPlan(
+  get: Get,
+  draft: Draft
+): { engine: Engine; oneTask: boolean; taskCount: number } {
+  const s = get().settings;
+  const r = draft.result;
+  const preset = s ? presetForDraft(s, draft) : null;
+  if (!s || !r || !preset) return { engine: "ytdlp", oneTask: false, taskCount: 0 };
+
+  const galleryInstalled = !!get().binaries.find(
+    (b) => b.name === "gallery-dl" && b.installed
+  );
+  const engine = resolveEngine(preset, r.engine, galleryInstalled);
+  // "Fetch all" hands the original link to the tool and lets it walk the
+  // whole thing — the only way to get an Instagram profile or a multi-photo
+  // post, whose items have no separate page of their own to queue.
+  // gallery-dl always works this way.
+  const oneTask = isFetchAll(preset) || engine === "gallerydl";
+  const selectable = r.kind === "playlist";
+  // An empty selection means the user unticked everything — nothing to do.
+  const taskCount = oneTask
+    ? selectable && draft.selected.length === 0
+      ? 0
+      : 1
+    : selectable
+      ? draft.selected.length
+      : 1;
+  return { engine, oneTask, taskCount };
+}
+
 export function buildDraftItems(get: Get, draft: Draft): DownloadOptions[] {
   const s = get().settings;
   if (!s || !draft.result) return [];
-  const preset =
-    s.presets.find((p) => p.id === draft.presetId) ??
-    s.presets.find((p) => p.id === s.defaultPresetId) ??
-    s.presets[0];
+  const preset = presetForDraft(s, draft);
   if (!preset) return [];
   const lang = s.language ?? "en";
   const t = (k: MsgKey) => translate(lang, k);
   const r = draft.result;
+  const { engine, oneTask, taskCount } = draftPlan(get, draft);
+
+  if (oneTask) {
+    if (taskCount === 0) return [];
+    const all = r.kind !== "playlist" || draft.selected.length === r.entries.length;
+    return [
+      optionsFromPreset(
+        preset,
+        {
+          url: draft.url,
+          title: r.title,
+          thumbnail: r.thumbnail,
+          sourceAbr: sourceAbrOf(r),
+          playlist: true,
+          engine,
+          // Deselected items become an explicit 1-based item list; both tools
+          // take the same "1,3,5-8" syntax.
+          playlistItems: all
+            ? null
+            : [...draft.selected].sort((a, b) => a - b).map((i) => i + 1).join(","),
+          // gallery-dl reports no totals, so give it the count when we know it.
+          expectedItems:
+            r.kind === "playlist" ? (all ? r.entries.length : draft.selected.length) : null,
+        },
+        t
+      ),
+    ];
+  }
 
   if (r.kind === "playlist") {
     const groupId = `${draft.id}-${draft.addedAt}`;

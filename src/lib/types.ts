@@ -31,9 +31,15 @@ export interface MetadataOverrides {
   genre?: string;
 }
 
+/** Tool that runs a download. gallery-dl is the one that can fetch photos. */
+export type Engine = "ytdlp" | "gallerydl";
+
 export interface DownloadOptions {
   url: string;
   kind: DownloadKind;
+  engine?: Engine | null;
+  /** Items expected, when analysis knew — drives gallery-dl progress. */
+  expectedItems?: number | null;
   /** yt-dlp -f selector, e.g. "137+bestaudio" or "bv[height<=1080]+ba/b" */
   format?: string | null;
   /** human readable label, e.g. "1080p60 · AV1 · HDR" */
@@ -47,6 +53,8 @@ export interface DownloadOptions {
   sourceAbr?: number | null;
   playlist: boolean;
   playlistItems?: string | null;
+  /** The format may resolve to a still image — skip media postprocessors. */
+  includeImages?: boolean | null;
   subtitleLangs?: string | null;
   embedSubs?: boolean | null;
   audioLang?: string | null;
@@ -75,6 +83,16 @@ export interface Preset {
   bitrateMode?: BitrateMode | null;
   subtitleLangs?: string | null;
   embedSubs?: boolean | null;
+  /**
+   * Download everything the link contains (profile, album, carousel post) as
+   * one task, rather than one task per item.
+   */
+  fetchAll?: boolean | null;
+  /**
+   * "gallerydl" routes links through gallery-dl whenever it's installed —
+   * the only way to get photo posts. Anything else lets analysis decide.
+   */
+  engine?: Engine | null;
   /** Extra raw yt-dlp CLI arguments, shell-quoted (advanced). */
   customYtdlpArgs?: string | null;
   /** Extra raw ffmpeg arguments passed via --postprocessor-args (advanced). */
@@ -147,9 +165,23 @@ export interface Settings {
   defaultPresetId: string;
   /** Per-service default preset overrides: service key -> preset id. */
   servicePresets: Record<string, string>;
+  /** Ids of one-time settings migrations already applied (backend-owned). */
+  migrations?: string[];
   /** The user confirmed the legal disclaimer on first launch. */
   disclaimerAccepted: boolean;
   language: "en" | "uk" | "ru";
+}
+
+// ---- Cookie diagnostics ----
+
+export interface CookieCheck {
+  source: "browser" | "file" | "none";
+  /** Browser name or file path, for display. */
+  detail: string;
+  ok: boolean;
+  count?: number | null;
+  message: string;
+  hint?: string | null;
 }
 
 // ---- URL analysis ----
@@ -186,6 +218,8 @@ export interface PlaylistEntry {
 
 export interface AnalyzeResult {
   kind: "video" | "playlist";
+  /** Tool that can actually fetch this link. */
+  engine: Engine;
   url: string;
   id: string;
   title: string;

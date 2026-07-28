@@ -26,6 +26,14 @@ pub struct MetadataOverrides {
 pub struct DownloadOptions {
     pub url: String,
     pub kind: String, // "video" | "audio"
+    /// Which tool runs the download: "ytdlp" (default) or "gallerydl".
+    /// gallery-dl is the one that can fetch photo posts and profile galleries.
+    #[serde(default)]
+    pub engine: Option<String>,
+    /// Items this task is expected to produce, when known from analysis —
+    /// gallery-dl reports no totals of its own, so this drives its progress.
+    #[serde(default)]
+    pub expected_items: Option<u32>,
     #[serde(default)]
     pub format: Option<String>,
     #[serde(default)]
@@ -45,6 +53,11 @@ pub struct DownloadOptions {
     pub playlist: bool,
     #[serde(default)]
     pub playlist_items: Option<String>,
+    /// The format selector may resolve to a still image (Instagram photos,
+    /// carousel posts). Media postprocessors can't handle those, so they are
+    /// skipped for the whole task.
+    #[serde(default)]
+    pub include_images: Option<bool>,
     #[serde(default)]
     pub subtitle_langs: Option<String>,
     #[serde(default)]

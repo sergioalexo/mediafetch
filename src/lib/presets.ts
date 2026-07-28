@@ -7,6 +7,7 @@ import type {
   AudioQuality,
   BitrateMode,
   DownloadOptions,
+  Engine,
   HistoryEntry,
   Preset,
 } from "./types";
@@ -65,7 +66,14 @@ export const VIDEO_PRESETS: {
   { value: "1080", label: null, fixed: "1080p", f: "bv*[height<=1080]+ba/b/ba" },
   { value: "720", label: null, fixed: "720p", f: "bv*[height<=720]+ba/b/ba" },
   { value: "480", label: null, fixed: "480p", f: "bv*[height<=480]+ba/b/ba" },
+  // Photos and videos as the site stores them. A still image is a single
+  // format with no codecs, so "b" has to come first — bv*+ba would try to
+  // merge a picture with itself, and a height filter would reject it.
+  { value: "media", label: "dl.mediaOriginal", f: "b/bv*+ba/bv/ba" },
 ];
+
+/** Video presets that can also produce still images (photo posts). */
+export const IMAGE_CAPABLE_PRESETS = ["media"];
 
 export function videoPresetLabel(
   value: string,
@@ -111,6 +119,36 @@ interface BuildContext {
   sourceAbr?: number | null;
   groupId?: string | null;
   groupTitle?: string | null;
+  /** Let the tool walk the whole link itself (see `Preset.fetchAll`). */
+  playlist?: boolean;
+  /** 1-based item selection, when not everything is wanted. */
+  playlistItems?: string | null;
+  engine?: Engine;
+  /** Items this task should produce, when analysis counted them. */
+  expectedItems?: number | null;
+}
+
+/** True when this preset downloads a link's items in one run. */
+export function isFetchAll(preset: Preset): boolean {
+  return preset.kind !== "audio" && !!preset.fetchAll;
+}
+
+/**
+ * Which tool runs a download.
+ *
+ * gallery-dl is the only one that sees still images, so a preset asking for
+ * it wins whenever it's installed. When it isn't, the link still downloads
+ * through yt-dlp — videos and reels work either way, just without photos.
+ * Analysis gets the last word only when yt-dlp couldn't read the link at all.
+ */
+export function resolveEngine(
+  preset: Preset,
+  analyzed: Engine | undefined,
+  galleryInstalled: boolean
+): Engine {
+  if (preset.kind === "audio") return "ytdlp"; // gallery-dl has no audio extraction
+  if (preset.engine === "gallerydl" && galleryInstalled) return "gallerydl";
+  return analyzed === "gallerydl" ? "gallerydl" : "ytdlp";
 }
 
 /** Build the yt-dlp DownloadOptions for one item from a preset. */
@@ -124,12 +162,16 @@ export function optionsFromPreset(
   return {
     url: ctx.url,
     kind: preset.kind,
+    engine: ctx.engine ?? "ytdlp",
+    expectedItems: ctx.expectedItems ?? null,
     format: audio ? "ba/b" : vp.f,
     formatNote: audio ? presetSummary(preset, t) : videoPresetLabel(vp.value, t),
     audioFormat: audio ? preset.audioFormat : null,
     audioQuality: audio ? presetAudioQuality(preset) : null,
     sourceAbr: audio ? ctx.sourceAbr ?? null : null,
-    playlist: false,
+    playlist: ctx.playlist ?? false,
+    playlistItems: ctx.playlistItems ?? null,
+    includeImages: !audio && IMAGE_CAPABLE_PRESETS.includes(preset.videoPreset),
     subtitleLangs: !audio && preset.subtitleLangs ? preset.subtitleLangs : null,
     embedSubs: !audio ? preset.embedSubs ?? null : null,
     metadata: null,

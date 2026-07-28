@@ -26,6 +26,7 @@ async function environmentBlock(): Promise<string> {
     `- OS: ${diag.os} (${diag.arch})`,
     `- yt-dlp: ${diag.ytdlpVersion ?? "not installed"}`,
     `- FFmpeg: ${diag.ffmpegVersion ?? "not installed"}`,
+    `- gallery-dl: ${diag.gallerydlVersion ?? "not installed"}`,
   ].join("\n");
 }
 

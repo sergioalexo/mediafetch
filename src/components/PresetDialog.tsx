@@ -5,6 +5,7 @@ import { presetAudioQuality } from "@/lib/presets";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -39,6 +40,8 @@ export function PresetDialog({
   const [audioFormat, setAudioFormat] = useState<AudioFormat>("mp3");
   const [audioQuality, setAudioQuality] = useState<AudioQuality>("match");
   const [subLangs, setSubLangs] = useState("");
+  const [fetchAll, setFetchAll] = useState(false);
+  const [useGallery, setUseGallery] = useState(false);
   const [customYtdlpArgs, setCustomYtdlpArgs] = useState("");
   const [customFfmpegArgs, setCustomFfmpegArgs] = useState("");
 
@@ -50,6 +53,8 @@ export function PresetDialog({
     setAudioFormat(preset?.audioFormat ?? "mp3");
     setAudioQuality(preset ? presetAudioQuality(preset) : "match");
     setSubLangs(preset?.subtitleLangs ?? "");
+    setFetchAll(!!preset?.fetchAll);
+    setUseGallery(preset?.engine === "gallerydl");
     setCustomYtdlpArgs(preset?.customYtdlpArgs ?? "");
     setCustomFfmpegArgs(preset?.customFfmpegArgs ?? "");
   }, [open, preset]);
@@ -67,6 +72,8 @@ export function PresetDialog({
       audioQuality,
       subtitleLangs: kind === "video" && subLangs.trim() ? subLangs.trim() : null,
       embedSubs: kind === "video" && subLangs.trim() ? true : null,
+      fetchAll: kind === "video" && fetchAll ? true : null,
+      engine: kind === "video" && useGallery ? "gallerydl" : null,
       customYtdlpArgs: customYtdlpArgs.trim() || null,
       customFfmpegArgs: customFfmpegArgs.trim() || null,
     };
@@ -112,6 +119,32 @@ export function PresetDialog({
           {kind === "video" ? (
             <>
               <VideoPresetSelect preset={videoPreset} setPreset={setVideoPreset} />
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={fetchAll}
+                  onCheckedChange={(v) => setFetchAll(v === true)}
+                />
+                <span className="space-y-0.5">
+                  <span className="block text-xs font-medium">{t("pd.fetchAll")}</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {t("pd.fetchAllHint")}
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={useGallery}
+                  onCheckedChange={(v) => setUseGallery(v === true)}
+                />
+                <span className="space-y-0.5">
+                  <span className="block text-xs font-medium">{t("pd.useGallery")}</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {t("pd.useGalleryHint")}
+                  </span>
+                </span>
+              </label>
               <div className="space-y-1.5">
                 <Label className="text-xs text-muted-foreground">{t("pd.subLangs")}</Label>
                 <Input

@@ -10,9 +10,13 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub const YTDLP: &str = "yt-dlp";
 pub const FFMPEG: &str = "ffmpeg";
+pub const GALLERYDL: &str = "gallery-dl";
 
 const YTDLP_REPO: &str = "yt-dlp/yt-dlp";
 const FFMPEG_REPO: &str = "BtbN/FFmpeg-Builds";
+/// gallery-dl's own repository publishes no binaries; the project's
+/// standalone executables are built and released here.
+const GALLERYDL_REPO: &str = "gdl-org/builds";
 
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -23,6 +27,13 @@ const YTDLP_ASSET: &str = "yt-dlp.exe";
 const YTDLP_ASSET: &str = "yt-dlp_macos";
 #[cfg(all(unix, not(target_os = "macos")))]
 const YTDLP_ASSET: &str = "yt-dlp";
+
+#[cfg(windows)]
+const GALLERYDL_ASSET: &str = "gallery-dl_windows.exe";
+#[cfg(target_os = "macos")]
+const GALLERYDL_ASSET: &str = "gallery-dl_macos";
+#[cfg(all(unix, not(target_os = "macos")))]
+const GALLERYDL_ASSET: &str = "gallery-dl_linux";
 
 #[cfg(windows)]
 fn exe_name(name: &str) -> String {
@@ -126,6 +137,14 @@ pub fn ytdlp_path(app: &AppHandle) -> Result<PathBuf, String> {
     })
 }
 
+pub fn gallerydl_path(app: &AppHandle) -> Result<PathBuf, String> {
+    resolve(app, GALLERYDL).map(|(p, _)| p).ok_or_else(|| {
+        "gallery-dl is not installed. Open the Components page to install it — it's what \
+         downloads photo posts and profile galleries."
+            .to_string()
+    })
+}
+
 pub fn ffmpeg_dir(app: &AppHandle) -> Option<PathBuf> {
     resolve(app, FFMPEG).map(|(p, _)| p.parent().map(|d| d.to_path_buf()).unwrap_or(p))
 }
@@ -134,6 +153,7 @@ pub fn ffmpeg_dir(app: &AppHandle) -> Option<PathBuf> {
 fn component_files(name: &str) -> Vec<String> {
     match name {
         YTDLP => vec![exe_name(YTDLP)],
+        GALLERYDL => vec![exe_name(GALLERYDL)],
         FFMPEG => vec![exe_name(FFMPEG), exe_name("ffprobe"), "ffmpeg.tag".to_string()],
         _ => Vec::new(),
     }
@@ -279,8 +299,16 @@ fn repo_for(name: &str) -> Result<&'static str, String> {
     match name {
         YTDLP => Ok(YTDLP_REPO),
         FFMPEG => Ok(FFMPEG_REPO),
+        GALLERYDL => Ok(GALLERYDL_REPO),
         other => Err(format!("Unknown binary: {other}")),
     }
+}
+
+/// gallery-dl reports "1.32.9-dev:2026.07.28" — the part after the colon is
+/// the build date, which is exactly what the build repo tags its releases
+/// with, so that is what an update check can compare.
+fn gallerydl_build(version: &str) -> Option<&str> {
+    version.split_once(':').map(|(_, build)| build.trim())
 }
 
 /// Recent release tags of a component, newest first.
@@ -324,6 +352,38 @@ pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus
         current_version: ytdlp_version,
         latest_version: ytdlp_latest,
         previous_version: previous_exe(app, YTDLP).and_then(|p| run_version(&p, "--version")),
+    });
+
+    // ---- gallery-dl ----
+    let gallerydl = resolve(app, GALLERYDL);
+    let gallerydl_version = gallerydl
+        .as_ref()
+        .and_then(|(p, _)| run_version(p, "--version"));
+    let gallerydl_latest = if check_latest {
+        latest_release(GALLERYDL_REPO, &proxy)
+            .await
+            .ok()
+            .map(|r| r.tag_name)
+    } else {
+        None
+    };
+    out.push(BinaryStatus {
+        name: GALLERYDL.into(),
+        repo_url: "https://github.com/mikf/gallery-dl".into(),
+        releases_url: format!("https://github.com/{GALLERYDL_REPO}/releases"),
+        path: gallerydl.as_ref().map(|(p, _)| p.to_string_lossy().into_owned()),
+        installed: gallerydl.is_some(),
+        managed: gallerydl.as_ref().map(|(_, m)| *m).unwrap_or(false),
+        update_available: match (&gallerydl_version, &gallerydl_latest) {
+            (Some(cur), Some(latest)) => {
+                gallerydl_build(cur) != Some(latest.trim_start_matches('v'))
+            }
+            _ => false,
+        },
+        current_version: gallerydl_version,
+        latest_version: gallerydl_latest,
+        previous_version: previous_exe(app, GALLERYDL)
+            .and_then(|p| run_version(&p, "--version")),
     });
 
     // ---- ffmpeg ----
@@ -454,13 +514,18 @@ async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Re
         None => latest_release(repo_for(name)?, &proxy).await?,
     };
     match name {
-        YTDLP => {
+        YTDLP | GALLERYDL => {
+            let (wanted, exe) = if name == GALLERYDL {
+                (GALLERYDL_ASSET, exe_name(GALLERYDL))
+            } else {
+                (YTDLP_ASSET, exe_name(YTDLP))
+            };
             let asset = release
                 .assets
                 .iter()
-                .find(|a| a.name == YTDLP_ASSET)
-                .ok_or_else(|| format!("{YTDLP_ASSET} asset not found in this release"))?;
-            let dest = dir.join(exe_name(YTDLP));
+                .find(|a| a.name == wanted)
+                .ok_or_else(|| format!("{wanted} asset not found in this release"))?;
+            let dest = dir.join(exe);
             download_with_progress(app, name, &asset.browser_download_url, asset.size, &dest)
                 .await?;
             #[cfg(unix)]

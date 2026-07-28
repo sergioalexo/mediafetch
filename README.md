@@ -6,7 +6,7 @@ A cross-platform media download manager — a graphical interface for **yt-dlp**
 
 ## Disclaimer
 
-MediaFetch is an independent graphical user interface (GUI) for the open-source projects [yt-dlp](https://github.com/yt-dlp/yt-dlp) and [FFmpeg](https://ffmpeg.org/). It is not affiliated with, endorsed by, or sponsored by YouTube, Google, SoundCloud, Vimeo, or any other content platform. MediaFetch does not host, store, index, or distribute any media or content.
+MediaFetch is an independent graphical user interface (GUI) for the open-source projects [yt-dlp](https://github.com/yt-dlp/yt-dlp), [FFmpeg](https://ffmpeg.org/) and [gallery-dl](https://github.com/mikf/gallery-dl). It is not affiliated with, endorsed by, or sponsored by YouTube, Google, SoundCloud, Vimeo, Instagram, Meta, or any other content platform. MediaFetch does not host, store, index, or distribute any media or content.
 
 MediaFetch does not circumvent digital rights management (DRM) or other technological protection measures (TPMs). Content protected by DRM is not supported.
 
@@ -42,6 +42,13 @@ This software is provided "as is", without warranty of any kind, express or impl
 **Audio**
 - Extract audio to MP3, FLAC, WAV, AAC or OPUS at best available quality
 
+**Photos & videos (social media)**
+- Built-in "Photos & videos" preset that downloads pictures as well as video, via **gallery-dl**
+- Grabs a whole profile, album or multi-photo post in one task, with per-item selection
+- Default preset for Instagram links, which need sign-in cookies — including for public posts
+- Without gallery-dl installed the same links still download, video only (yt-dlp cannot see still images)
+- Settings → Cookies has a **Check cookies** button that reports how many cookies a source actually yields
+
 **Advanced**
 - SponsorBlock integration (remove segments or mark chapters, per-category)
 - Browser cookies or cookies.txt support
@@ -62,8 +69,8 @@ This software is provided "as is", without warranty of any kind, express or impl
 - Dark / light theme
 
 **Components** (`src-tauri/src/binaries.rs` + Components page)
-- Self-managed yt-dlp and FFmpeg components
-- Links to the official upstream GitHub repositories ([yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp), [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds))
+- Self-managed yt-dlp, FFmpeg and gallery-dl components
+- Links to the official upstream GitHub repositories ([yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp), [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), [mikf/gallery-dl](https://github.com/mikf/gallery-dl) via its [standalone builds](https://github.com/gdl-org/builds))
 - Installed version detection and latest-release checking
 - One-click installation and updates
 

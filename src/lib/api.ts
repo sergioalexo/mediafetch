@@ -3,6 +3,7 @@ import type {
   AnalyzeResult,
   AppUpdateStatus,
   BinaryStatus,
+  CookieCheck,
   DownloadOptions,
   DownloadTask,
   HistoryEntry,
@@ -15,6 +16,7 @@ export const saveSettings = (settings: Settings) =>
   invoke<void>("save_settings", { settings });
 export const pickDownloadDir = () => invoke<string | null>("pick_download_dir");
 export const pickCookiesFile = () => invoke<string | null>("pick_cookies_file");
+export const testCookies = () => invoke<CookieCheck>("test_cookies");
 
 // ---- URL analysis ----
 export const analyzeUrl = (url: string) => invoke<AnalyzeResult>("analyze_url", { url });
@@ -56,6 +58,7 @@ export interface Diagnostics {
   arch: string;
   ytdlpVersion: string | null;
   ffmpegVersion: string | null;
+  gallerydlVersion: string | null;
 }
 export const collectDiagnostics = () => invoke<Diagnostics>("collect_diagnostics");
 

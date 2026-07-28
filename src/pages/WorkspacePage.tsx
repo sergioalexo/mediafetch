@@ -20,9 +20,14 @@ import {
   X,
 } from "lucide-react";
 import type { DownloadOptions, DownloadTask, Preset } from "@/lib/types";
-import { buildDraftItems, useApp, type Draft } from "@/lib/store";
+import { buildDraftItems, draftPlan, useApp, type Draft } from "@/lib/store";
 import { useT } from "@/lib/i18n";
-import { isAlreadyDownloaded, optionsFromPreset, presetSummary, sourceAbrOf } from "@/lib/presets";
+import {
+  isAlreadyDownloaded,
+  optionsFromPreset,
+  presetSummary,
+  sourceAbrOf,
+} from "@/lib/presets";
 import { cn, extractUrls, formatDuration, formatEta } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +51,7 @@ export function WorkspacePage() {
   const settings = useApp((s) => s.settings);
   const drafts = useApp((s) => s.drafts);
   const queue = useApp((s) => s.queue);
+  const binaries = useApp((s) => s.binaries);
   const addUrls = useApp((s) => s.addUrls);
   const downloadAll = useApp((s) => s.downloadAllDrafts);
   const downloadNext = useApp((s) => s.downloadNextDraft);
@@ -88,9 +94,11 @@ export function WorkspacePage() {
     () =>
       drafts.reduce((n, d) => {
         if (d.status !== "ready" || !d.result) return n;
-        return n + (d.result.kind === "playlist" ? d.selected.length : 1);
+        return n + draftPlan(useApp.getState, d).taskCount;
       }, 0),
-    [drafts]
+    // Presets and installed components both feed the plan (a fetch-all preset
+    // or gallery-dl collapses a whole link into a single task).
+    [drafts, presets, binaries]
   );
 
   // Group live tasks by their playlist groupId, preserving first-seen order.
@@ -394,6 +402,7 @@ function DraftCard({ draft }: { draft: Draft }) {
 
   const presets = settings?.presets ?? [];
   const isPlaylist = draft.result?.kind === "playlist";
+  const { oneTask } = draftPlan(useApp.getState, draft);
 
   const previewCommand = () => {
     const items = buildDraftItems(useApp.getState, draft);
@@ -553,6 +562,7 @@ function DraftCard({ draft }: { draft: Draft }) {
                   a: draft.selected.length,
                   b: draft.result.entries.length,
                 })}
+                {oneTask && <> · {t("ws.oneTask")}</>}
               </div>
             </div>
             {presetPicker}

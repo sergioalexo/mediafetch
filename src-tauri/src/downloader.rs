@@ -362,11 +362,19 @@ pub fn build_args(
     }
 
     // Embedding
+    //
+    // A task that may pull still images (Instagram photos and carousel posts)
+    // skips both postprocessors. yt-dlp routes them by codec, and an image
+    // format carries no vcodec/acodec at all, so it is treated as a video and
+    // the processors run on the .jpg: EmbedThumbnail then aborts the whole
+    // download, since only audio/video containers can hold a thumbnail, and
+    // the metadata processor re-muxes the picture through ffmpeg for nothing.
     let audio_format = opts.audio_format.as_deref().unwrap_or("mp3");
-    if settings.embed_thumbnail && !(is_audio && audio_format == "wav") {
+    let include_images = opts.include_images.unwrap_or(false);
+    if settings.embed_thumbnail && !include_images && !(is_audio && audio_format == "wav") {
         args.push("--embed-thumbnail".into());
     }
-    if settings.embed_metadata {
+    if settings.embed_metadata && !include_images {
         args.push("--embed-metadata".into());
     }
 
@@ -471,6 +479,63 @@ pub fn build_args(
     }
     if let Some(extra) = opts.custom_ytdlp_args.as_deref().filter(|s| !s.trim().is_empty()) {
         args.extend(shell_split(extra).map_err(|e| format!("Custom yt-dlp arguments: {e}"))?);
+    }
+
+    args.push("--".into());
+    args.push(opts.url.clone());
+    Ok(args)
+}
+
+/// True when this task should run through gallery-dl instead of yt-dlp.
+pub fn is_gallery(opts: &DownloadOptions) -> bool {
+    opts.engine.as_deref() == Some("gallerydl")
+}
+
+/// Build the gallery-dl command line for a task.
+///
+/// gallery-dl covers what yt-dlp structurally cannot: photo posts and whole
+/// profile galleries, where the media are still images and never appear as
+/// downloadable "formats". It takes the whole link in one run, so there is no
+/// format selection here — only where the files land and which items to take.
+pub fn build_gallerydl_args(
+    opts: &DownloadOptions,
+    settings: &Settings,
+) -> Result<Vec<String>, String> {
+    let mut args: Vec<String> = Vec::new();
+
+    // Galleries are behind a login on most sites — Instagram redirects even
+    // public posts to its sign-in page for an anonymous request.
+    if !settings.cookies_file.is_empty() {
+        args.extend(["--cookies".into(), settings.cookies_file.clone()]);
+    } else if !settings.cookies_from_browser.is_empty() {
+        args.extend([
+            "--cookies-from-browser".into(),
+            settings.cookies_from_browser.clone(),
+        ]);
+    }
+
+    // gallery-dl lays out <download dir>/<site>/<account>/… by itself, which
+    // keeps a profile grab from flooding the top-level download folder.
+    std::fs::create_dir_all(&settings.download_dir).map_err(|e| e.to_string())?;
+    args.extend(["-d".into(), settings.download_dir.clone()]);
+
+    // The draft's item selection, already 1-based — gallery-dl's --range takes
+    // the same "1,3,5-8" syntax as yt-dlp's --playlist-items.
+    if let Some(items) = opts.playlist_items.clone().filter(|i| !i.is_empty()) {
+        args.extend(["--range".into(), items]);
+    }
+
+    if !settings.rate_limit.trim().is_empty() {
+        args.extend(["--limit-rate".into(), settings.rate_limit.trim().to_string()]);
+    }
+    if !settings.proxy.trim().is_empty() {
+        args.extend(["--proxy".into(), settings.proxy.trim().to_string()]);
+    }
+    if settings.retries > 0 {
+        args.extend(["--retries".into(), settings.retries.to_string()]);
+    }
+    if settings.sleep_requests > 0.0 {
+        args.extend(["--sleep-request".into(), settings.sleep_requests.to_string()]);
     }
 
     args.push("--".into());
@@ -641,7 +706,13 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         task.options.source_abr = probe_abr(&app, &task.options.url, &settings).await;
     }
 
-    let ytdlp = match binaries::ytdlp_path(&app) {
+    let gallery = is_gallery(&task.options);
+    let tool = if gallery {
+        binaries::gallerydl_path(&app)
+    } else {
+        binaries::ytdlp_path(&app)
+    };
+    let tool = match tool {
         Ok(p) => p,
         Err(e) => {
             fail_task(&app, &task, &settings, e).await;
@@ -652,7 +723,12 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         single_connection: task.force_single_connection,
         default_player_client: task.use_default_player_client,
     };
-    let args = match build_args(&app, &task.options, &settings, tweaks) {
+    let built = if gallery {
+        build_gallerydl_args(&task.options, &settings)
+    } else {
+        build_args(&app, &task.options, &settings, tweaks)
+    };
+    let args = match built {
         Ok(a) => a,
         Err(e) => {
             fail_task(&app, &task, &settings, e).await;
@@ -660,7 +736,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         }
     };
 
-    let mut cmd = tokio::process::Command::new(&ytdlp);
+    let mut cmd = tokio::process::Command::new(&tool);
     force_utf8_io(&mut cmd);
     cmd.args(&args);
     cmd.stdout(std::process::Stdio::piped());
@@ -671,10 +747,11 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         cmd.creation_flags(binaries::CREATE_NO_WINDOW);
     }
 
+    let tool_name = if gallery { "gallery-dl" } else { "yt-dlp" };
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            fail_task(&app, &task, &settings, format!("Failed to start yt-dlp: {e}")).await;
+            fail_task(&app, &task, &settings, format!("Failed to start {tool_name}: {e}")).await;
             return;
         }
     };
@@ -693,7 +770,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     if task.use_default_player_client {
         push_log(&app, &task.id, "Retrying with yt-dlp's default player clients to get fresh media URLs.".into());
     }
-    push_log(&app, &task.id, format!("$ {} {}", ytdlp.to_string_lossy(), args.join(" ")));
+    push_log(&app, &task.id, format!("$ {} {}", tool.to_string_lossy(), args.join(" ")));
 
     // Collect stderr in the background for error reporting, and mirror every
     // line into the shared transcript so the log viewer sees it live.
@@ -727,7 +804,9 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     let already_re =
         regex::Regex::new(r#"^\[download\] (.+) has already been downloaded"#).unwrap();
 
-    if let Some(stdout) = child.stdout.take() {
+    if gallery {
+        run_gallery_stdout(&app, &mut child, &task).await;
+    } else if let Some(stdout) = child.stdout.take() {
         let mut last_emit = std::time::Instant::now();
         read_lines(stdout, |line| {
             let line = line.trim_end();
@@ -851,17 +930,23 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         let failure = classify_failure(&raw_error);
         let error = friendly_error(&raw_error, failure);
 
-        if task.retry_count < settings.auto_retry_limit {
+        // A missing sign-in stays missing however many times we try.
+        if task.retry_count < settings.auto_retry_limit && failure != FailureKind::Auth {
             // Some failures (file locked by AV scan, a brief network blip)
             // reliably succeed on a plain retry — don't make the user click
             // for those. A short pause gives whatever held the file/network
             // a moment to clear.
             //
             // What went wrong decides what the retry should do differently.
+            //
+            // Both tweaks are yt-dlp flags, so a gallery-dl task just retries
+            // plainly — and gets a free resume, since gallery-dl skips the
+            // files the previous attempt already wrote.
             let (delay, note) = match failure {
+                _ if gallery => (3, ""),
                 FailureKind::Refused => (8, " with yt-dlp's default player clients"),
                 FailureKind::Write => (6, " without concurrent fragments"),
-                FailureKind::Other => (3, ""),
+                FailureKind::Auth | FailureKind::Other => (3, ""),
             };
             push_log(
                 &app,
@@ -876,10 +961,12 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             with_task(&app, &task.id, |t| {
                 t.status = TaskStatus::Queued;
                 t.retry_count += 1;
-                match failure {
-                    FailureKind::Refused => t.use_default_player_client = true,
-                    FailureKind::Write => t.force_single_connection = true,
-                    FailureKind::Other => {}
+                if !gallery {
+                    match failure {
+                        FailureKind::Refused => t.use_default_player_client = true,
+                        FailureKind::Write => t.force_single_connection = true,
+                        FailureKind::Auth | FailureKind::Other => {}
+                    }
                 }
                 t.progress = 0.0;
                 t.downloaded_bytes = 0;
@@ -903,6 +990,88 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     pump(&app);
 }
 
+/// Drive progress from gallery-dl's stdout.
+///
+/// gallery-dl has no progress protocol to hook into: it prints one absolute
+/// path per file, prefixed with "# " when the file was already there and got
+/// skipped. So a file line is the unit of progress, and the byte counter is
+/// summed by stat-ing each finished file.
+async fn run_gallery_stdout(
+    app: &AppHandle,
+    child: &mut tokio::process::Child,
+    task: &DownloadTask,
+) {
+    let Some(stdout) = child.stdout.take() else {
+        return;
+    };
+    let expected = task.options.expected_items.unwrap_or(0);
+    let started = std::time::Instant::now();
+    let mut files: u32 = 0;
+    let mut bytes: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
+
+    read_lines(stdout, |line| {
+        let line = line.trim_end();
+        if line.is_empty() {
+            return;
+        }
+        push_log(app, &task.id, line.to_string());
+
+        // Everything gallery-dl says about its own progress is a bare path;
+        // its status and error chatter is bracketed ("[instagram][error] …").
+        let (path, skipped) = match line.strip_prefix("# ") {
+            Some(rest) => (rest.trim(), true),
+            None if !line.starts_with('[') => (line, false),
+            None => return,
+        };
+        if path.is_empty() {
+            return;
+        }
+
+        files += 1;
+        if !skipped {
+            bytes += std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        let speed = if elapsed > 0.0 { bytes as f64 / elapsed } else { 0.0 };
+
+        let updated = with_task(app, &task.id, |t| {
+            if t.status == TaskStatus::Downloading || t.status == TaskStatus::Postprocessing {
+                t.status = TaskStatus::Downloading;
+            }
+            t.downloaded_bytes = bytes;
+            t.speed = speed;
+            t.playlist_index = Some(files);
+            // A gallery's size is only known when analysis counted the items;
+            // a whole profile has no total until it finishes.
+            if expected > 0 {
+                t.playlist_count = Some(expected);
+                t.progress = (f64::from(files) / f64::from(expected) * 100.0).clamp(0.0, 100.0);
+                let remaining = expected.saturating_sub(files);
+                t.eta = if files > 0 {
+                    elapsed / f64::from(files) * f64::from(remaining)
+                } else {
+                    0.0
+                };
+            }
+            if let Some(name) = std::path::Path::new(path).file_name() {
+                t.filename = Some(path.to_string());
+                if t.options.title.is_none() {
+                    t.title = name.to_string_lossy().into_owned();
+                }
+            }
+        });
+
+        if let Some(t) = updated {
+            if last_emit.elapsed().as_millis() > 250 {
+                last_emit = std::time::Instant::now();
+                emit_task(app, &t);
+            }
+        }
+    })
+    .await;
+}
+
 /// Why an attempt failed, in the only terms a retry can act on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FailureKind {
@@ -912,12 +1081,25 @@ enum FailureKind {
     /// yt-dlp could not open the output file, typically several tasks'
     /// fragment threads writing into the same folder at once.
     Write,
+    /// The site wants a signed-in session (Instagram profiles and private
+    /// posts, age-gated videos). Nothing to retry — it needs cookies.
+    Auth,
     Other,
 }
 
 fn classify_failure(error: &str) -> FailureKind {
     let lower = error.to_lowercase();
-    if lower.contains("http error 403")
+    if lower.contains("login required")
+        || lower.contains("redirect to login")
+        || lower.contains("requested content is not available")
+        || lower.contains("use --cookies")
+        || lower.contains("--cookies-from-browser")
+        || lower.contains("sign in to confirm")
+        || lower.contains("private video")
+        || lower.contains("only available for registered users")
+    {
+        FailureKind::Auth
+    } else if lower.contains("http error 403")
         || lower.contains("403: forbidden")
         || lower.contains("http error 429")
         || lower.contains("too many requests")
@@ -946,6 +1128,11 @@ fn friendly_error(error: &str, failure: FailureKind) -> String {
              this; if it keeps happening, update yt-dlp on the Components page, lower the \
              parallel-download count, or add cookies (Settings → Cookies).",
         ),
+        FailureKind::Auth => Some(
+            "The site wants a signed-in session for this link. Add your cookies in \
+             Settings → Cookies (a cookies.txt file, or import them from a browser you're \
+             logged in with). Instagram profiles and private posts always need this.",
+        ),
         FailureKind::Other => None,
     };
     match hint {
@@ -970,12 +1157,17 @@ async fn fail_task(app: &AppHandle, task: &DownloadTask, settings: &Settings, er
 }
 
 async fn finish_history(app: &AppHandle, task: &DownloadTask, settings: &Settings, ok: bool) {
-    let filesize = task
-        .filename
-        .as_deref()
-        .and_then(|f| std::fs::metadata(f).ok())
-        .map(|m| m.len())
-        .unwrap_or(task.downloaded_bytes);
+    // A gallery task wrote many files; its running total is the real size,
+    // where `filename` only holds whichever file happened to come last.
+    let filesize = if is_gallery(&task.options) {
+        task.downloaded_bytes
+    } else {
+        task.filename
+            .as_deref()
+            .and_then(|f| std::fs::metadata(f).ok())
+            .map(|m| m.len())
+            .unwrap_or(task.downloaded_bytes)
+    };
     let elapsed = task
         .completed_at
         .zip(task.started_at)

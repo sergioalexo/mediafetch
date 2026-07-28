@@ -47,6 +47,8 @@ pub struct PlaylistEntry {
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeResult {
     pub kind: String, // "video" | "playlist"
+    /// Tool that can actually fetch this link: "ytdlp" or "gallerydl".
+    pub engine: String,
     pub url: String,
     pub id: String,
     pub title: String,
@@ -58,6 +60,108 @@ pub struct AnalyzeResult {
     pub audio_languages: Vec<String>,
     pub entry_count: Option<u64>,
     pub entries: Vec<PlaylistEntry>,
+}
+
+/// Ask gallery-dl whether it can handle a link yt-dlp gave up on.
+///
+/// Returns `None` when gallery-dl isn't installed or doesn't recognise the
+/// URL, so the caller can surface yt-dlp's original error instead. A gallery
+/// is staged as a single item: unlike a playlist, its contents have no
+/// separate pages to queue individually — gallery-dl walks the link itself.
+async fn analyze_gallery(
+    app: &AppHandle,
+    url: &str,
+    settings: &Settings,
+) -> Option<Result<AnalyzeResult, String>> {
+    let gallerydl = binaries::gallerydl_path(app).ok()?;
+
+    let mut cmd = tokio::process::Command::new(&gallerydl);
+    // One item is enough to prove the extractor works, and --simulate keeps
+    // it to metadata — nothing is written.
+    cmd.args(["--simulate", "--range", "1-1"]);
+    if !settings.cookies_file.is_empty() {
+        cmd.args(["--cookies", &settings.cookies_file]);
+    } else if !settings.cookies_from_browser.is_empty() {
+        cmd.args(["--cookies-from-browser", &settings.cookies_from_browser]);
+    }
+    if !settings.proxy.is_empty() {
+        cmd.args(["--proxy", &settings.proxy]);
+    }
+    cmd.arg("--").arg(url);
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(binaries::CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output().await.ok()?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Exit 64 is gallery-dl's "no extractor for this URL" — not our link.
+    if output.status.code() == Some(64) || text.contains("Unsupported URL") {
+        return None;
+    }
+
+    // It recognises the site but the session doesn't hold. Say so here rather
+    // than letting the download fail with the same thing minutes later.
+    if text.contains("redirect to login") || text.contains("login required") {
+        return Some(Err(format!(
+            "{} needs you to be signed in. Add cookies in Settings → Cookies, then \
+             check them with the button there.",
+            gallery_title(url)
+        )));
+    }
+    if !output.status.success() {
+        let detail = text
+            .lines()
+            .rev()
+            .find(|l| l.contains("[error]"))
+            .unwrap_or("gallery-dl could not read this link")
+            .trim()
+            .to_string();
+        return Some(Err(detail));
+    }
+
+    Some(Ok(AnalyzeResult {
+        kind: "video".into(),
+        engine: "gallerydl".into(),
+        url: url.to_string(),
+        id: String::new(),
+        title: gallery_title(url),
+        uploader: None,
+        thumbnail: None,
+        duration: None,
+        formats: vec![],
+        subtitles: vec![],
+        audio_languages: vec![],
+        entry_count: None,
+        entries: vec![],
+    }))
+}
+
+/// A readable name for a gallery link, e.g. "instagram.com/nasa".
+fn gallery_title(url: &str) -> String {
+    let rest = url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(url)
+        .trim_start_matches("www.");
+    let trimmed = rest
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(rest)
+        .trim_end_matches('/');
+    if trimmed.is_empty() {
+        url.to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn s(v: &Value, key: &str) -> Option<String> {
@@ -101,7 +205,13 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
             .rev()
             .find(|l| l.contains("ERROR") || !l.trim().is_empty())
             .unwrap_or("yt-dlp failed");
-        return Err(last.trim().to_string());
+        // Photo posts and profile galleries are invisible to yt-dlp — it only
+        // ever sees video formats — so a failure here is exactly where
+        // gallery-dl earns its place.
+        return match analyze_gallery(app, url, settings).await {
+            Some(result) => result,
+            None => Err(last.trim().to_string()),
+        };
     }
 
     let info: Value =
@@ -128,6 +238,7 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
 
         return Ok(AnalyzeResult {
             kind: "playlist".into(),
+            engine: "ytdlp".into(),
             url: url.to_string(),
             id: s(&info, "id").unwrap_or_default(),
             title: s(&info, "title").unwrap_or_else(|| "Playlist".into()),
@@ -209,6 +320,7 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
 
     Ok(AnalyzeResult {
         kind: "video".into(),
+        engine: "ytdlp".into(),
         url: url.to_string(),
         id: s(&info, "id").unwrap_or_default(),
         title: s(&info, "title").unwrap_or_else(|| "Untitled".into()),

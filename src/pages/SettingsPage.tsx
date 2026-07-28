@@ -2,7 +2,9 @@ import { useState, type ReactNode } from "react";
 import {
   AudioLines,
   Bug,
+  CheckCircle2,
   Cookie,
+  Loader2,
   Film,
   FolderOpen,
   Gauge,
@@ -15,13 +17,15 @@ import {
   Plus,
   ScrollText,
   Shield,
+  ShieldAlert,
   SlidersHorizontal,
 } from "lucide-react";
-import type { Preset, Settings } from "@/lib/types";
+import type { CookieCheck, Preset, Settings } from "@/lib/types";
 import { useApp } from "@/lib/store";
 import { openIssueReport } from "@/lib/report";
 import { LANGUAGES, useT, type MsgKey } from "@/lib/i18n";
 import { presetSummary, SERVICES } from "@/lib/presets";
+import { cn } from "@/lib/utils";
 import { PresetDialog } from "@/components/PresetDialog";
 import {
   Dialog,
@@ -71,6 +75,68 @@ function Row({
         {hint && <div className="text-xs text-muted-foreground">{hint}</div>}
       </div>
       <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Whether the configured cookie source actually yields cookies. Without this
+ * the setting is write-only: nothing tells you it worked until a download
+ * fails much later with an unrelated-looking error.
+ */
+function CookieTest() {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<CookieCheck | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      setResult(await api.testCookies());
+    } catch (e) {
+      setResult({
+        source: "none",
+        detail: "",
+        ok: false,
+        message: String(e),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="py-2.5">
+      <div className="flex items-center justify-between gap-6">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{t("set.cookiesTest")}</div>
+          <div className="text-xs text-muted-foreground">{t("set.cookiesTestHint")}</div>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => void run()} disabled={busy}>
+          {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {t("set.cookiesTestBtn")}
+        </Button>
+      </div>
+      {result && (
+        <div
+          className={cn(
+            "mt-2 flex items-start gap-2 rounded-lg border p-2.5 text-xs",
+            result.ok
+              ? "border-emerald-500/40 bg-emerald-500/10"
+              : "border-amber-500/40 bg-amber-500/10"
+          )}
+        >
+          {result.ok ? (
+            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" />
+          ) : (
+            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+          )}
+          <div className="min-w-0 space-y-1">
+            <div className="font-medium">{result.message}</div>
+            {result.hint && <div className="text-muted-foreground">{result.hint}</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -534,6 +600,9 @@ export function SettingsPage() {
               )}
             </div>
           </Row>
+          <CookieTest
+            key={`${settings.cookiesFromBrowser}|${settings.cookiesFile}`}
+          />
           <Row label={t("set.archive")} hint={t("set.archiveHint")}>
             <Switch
               checked={settings.useDownloadArchive}

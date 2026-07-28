@@ -21,6 +21,15 @@ pub struct Preset {
     pub subtitle_langs: Option<String>,
     #[serde(default)]
     pub embed_subs: Option<bool>,
+    /// Download everything a link contains (profile, album, carousel post) as
+    /// one task, instead of expanding it into one task per item.
+    #[serde(default)]
+    pub fetch_all: Option<bool>,
+    /// Preferred download tool: "gallerydl" to route links through gallery-dl
+    /// whenever it's installed (the only way to get photos), anything else to
+    /// let the link's analysis decide.
+    #[serde(default)]
+    pub engine: Option<String>,
     /// Extra raw yt-dlp CLI arguments, shell-quoted (advanced).
     #[serde(default)]
     pub custom_ytdlp_args: Option<String>,
@@ -31,6 +40,35 @@ pub struct Preset {
 
 fn default_audio_quality() -> String {
     "match".into()
+}
+
+pub const SOCIAL_MEDIA_PRESET_ID: &str = "social-media";
+
+/// Marker for the one-time seeding of [`social_media_preset`] into settings
+/// files written before it existed. Recorded so deleting the preset sticks.
+const SOCIAL_MEDIA_MIGRATION: &str = "social-media-preset";
+
+/// Photos *and* videos, exactly as the site stores them. The "media" quality
+/// preset resolves to a single progressive file, which is the only thing an
+/// Instagram photo has — a bv*+ba selector would reject it outright.
+fn social_media_preset() -> Preset {
+    Preset {
+        id: SOCIAL_MEDIA_PRESET_ID.into(),
+        name: "Photos & videos".into(),
+        kind: "video".into(),
+        video_preset: "media".into(),
+        audio_format: "mp3".into(),
+        audio_quality: "match".into(),
+        bitrate_mode: None,
+        subtitle_langs: None,
+        embed_subs: None,
+        fetch_all: Some(true),
+        // Photos only exist for gallery-dl; it falls back to yt-dlp when the
+        // component isn't installed, so a reel link still works either way.
+        engine: Some("gallerydl".into()),
+        custom_ytdlp_args: None,
+        custom_ffmpeg_args: None,
+    }
 }
 
 fn default_presets() -> Vec<Preset> {
@@ -45,6 +83,8 @@ fn default_presets() -> Vec<Preset> {
             bitrate_mode: None,
             subtitle_langs: None,
             embed_subs: None,
+            fetch_all: None,
+            engine: None,
             custom_ytdlp_args: None,
             custom_ffmpeg_args: None,
         },
@@ -58,9 +98,12 @@ fn default_presets() -> Vec<Preset> {
             bitrate_mode: None,
             subtitle_langs: None,
             embed_subs: None,
+            fetch_all: None,
+            engine: None,
             custom_ytdlp_args: None,
             custom_ffmpeg_args: None,
         },
+        social_media_preset(),
     ]
 }
 
@@ -110,6 +153,8 @@ pub struct Settings {
     pub default_preset_id: String,
     // Per-service default preset overrides: service key -> preset id.
     pub service_presets: std::collections::HashMap<String, String>,
+    /// Ids of one-time settings migrations already applied.
+    pub migrations: Vec<String>,
     // The user confirmed the legal disclaimer on first launch.
     pub disclaimer_accepted: bool,
     pub language: String, // "en" | "uk" | "ru"
@@ -147,6 +192,7 @@ impl Default for Settings {
             presets: default_presets(),
             default_preset_id: "video-best".into(),
             service_presets: std::collections::HashMap::new(),
+            migrations: Vec::new(),
             disclaimer_accepted: false,
             language: "en".into(),
         }
@@ -183,6 +229,20 @@ pub fn load(app: &AppHandle) -> Settings {
     }
     if !settings.presets.iter().any(|p| p.id == settings.default_preset_id) {
         settings.default_preset_id = settings.presets[0].id.clone();
+    }
+    // Seed the photos-and-videos preset once, and make it the Instagram
+    // default — Instagram is the service whose links are usually pictures.
+    // Both steps are skipped afterwards, so removing either one sticks.
+    if !settings.migrations.iter().any(|m| m == SOCIAL_MEDIA_MIGRATION) {
+        settings.migrations.push(SOCIAL_MEDIA_MIGRATION.into());
+        if !settings.presets.iter().any(|p| p.id == SOCIAL_MEDIA_PRESET_ID) {
+            settings.presets.push(social_media_preset());
+        }
+        settings
+            .service_presets
+            .entry("instagram".into())
+            .or_insert_with(|| SOCIAL_MEDIA_PRESET_ID.into());
+        let _ = save(app, &settings);
     }
     settings
 }

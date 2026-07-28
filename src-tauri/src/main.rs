@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod binaries;
+mod cookies;
 mod downloader;
 mod history;
 mod metadata;
@@ -50,6 +51,18 @@ async fn pick_cookies_file(app: AppHandle) -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Report whether the configured cookie source actually yields cookies —
+/// otherwise the only symptom is a download failing much later.
+#[tauri::command]
+async fn test_cookies(app: AppHandle) -> cookies::CookieCheck {
+    let settings = {
+        let state = app.state::<AppState>();
+        let s = state.settings.lock().unwrap().clone();
+        s
+    };
+    cookies::check(&app, &settings).await
+}
+
 // ---------- Analysis ----------
 
 #[tauri::command]
@@ -62,14 +75,23 @@ async fn analyze_url(app: AppHandle, url: String) -> Result<metadata::AnalyzeRes
     metadata::analyze(&app, &url, &settings).await
 }
 
-/// Preview the exact yt-dlp command line a download would run, without
-/// starting it — lets you sanity-check a preset (including custom args)
-/// before committing to a download.
+/// Preview the exact command line a download would run, without starting it —
+/// lets you sanity-check a preset (including custom args) before committing to
+/// a download. Shows whichever tool the task would actually use.
 #[tauri::command]
 fn preview_command(app: AppHandle, state: State<AppState>, options: DownloadOptions) -> Result<String, String> {
     let settings = state.settings.lock().unwrap().clone();
-    let ytdlp = binaries::ytdlp_path(&app)?;
-    let args = downloader::build_args(&app, &options, &settings, Default::default())?;
+    let gallery = downloader::is_gallery(&options);
+    let tool = if gallery {
+        binaries::gallerydl_path(&app)?
+    } else {
+        binaries::ytdlp_path(&app)?
+    };
+    let args = if gallery {
+        downloader::build_gallerydl_args(&options, &settings)?
+    } else {
+        downloader::build_args(&app, &options, &settings, Default::default())?
+    };
     let quoted: Vec<String> = args
         .iter()
         .map(|a| {
@@ -80,7 +102,7 @@ fn preview_command(app: AppHandle, state: State<AppState>, options: DownloadOpti
             }
         })
         .collect();
-    Ok(format!("{} {}", ytdlp.to_string_lossy(), quoted.join(" ")))
+    Ok(format!("{} {}", tool.to_string_lossy(), quoted.join(" ")))
 }
 
 // ---------- Queue ----------
@@ -428,6 +450,7 @@ struct Diagnostics {
     arch: String,
     ytdlp_version: Option<String>,
     ffmpeg_version: Option<String>,
+    gallerydl_version: Option<String>,
 }
 
 /// Snapshot of the local environment for a bug report. Deliberately limited to
@@ -440,6 +463,7 @@ fn collect_diagnostics(app: AppHandle) -> Diagnostics {
         arch: std::env::consts::ARCH.to_string(),
         ytdlp_version: binaries::tool_version(&app, binaries::YTDLP),
         ffmpeg_version: binaries::tool_version(&app, binaries::FFMPEG),
+        gallerydl_version: binaries::tool_version(&app, binaries::GALLERYDL),
     }
 }
 
@@ -520,6 +544,7 @@ fn main() {
             save_settings,
             pick_download_dir,
             pick_cookies_file,
+            test_cookies,
             analyze_url,
             preview_command,
             get_queue,
