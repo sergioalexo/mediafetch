@@ -216,6 +216,43 @@ pub fn rollback(app: &AppHandle, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Remove a managed component's installed files and any rollback backup,
+/// leaving it uninstalled so the existing Install button fetches it fresh.
+/// A last-resort fix for a component that's misbehaving or corrupted.
+pub fn uninstall(app: &AppHandle, name: &str) -> Result<(), String> {
+    let dir = bin_dir(app)?;
+    let files = component_files(name);
+    if files.is_empty() {
+        return Err(format!("Unknown binary: {name}"));
+    }
+    for f in &files {
+        let _ = std::fs::remove_file(dir.join(f));
+        let _ = std::fs::remove_file(dir.join("previous").join(f));
+    }
+    Ok(())
+}
+
+/// Wipe every managed component and rollback backup, plus yt-dlp's own
+/// on-disk network/extractor cache — a complete reset for when components
+/// are broken in a way a single reinstall doesn't fix. PATH-installed
+/// (unmanaged) tools are never touched.
+pub fn reset_all(app: &AppHandle) -> Result<(), String> {
+    if let Some((path, _)) = resolve(app, YTDLP) {
+        let mut cmd = std::process::Command::new(&path);
+        cmd.arg("--rm-cache-dir");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let _ = cmd.output(); // best-effort; a missing/broken yt-dlp shouldn't block the reset
+    }
+    let dir = bin_dir(app)?;
+    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn run_version(path: &PathBuf, arg: &str) -> Option<String> {
     let mut cmd = std::process::Command::new(path);
     cmd.arg(arg);

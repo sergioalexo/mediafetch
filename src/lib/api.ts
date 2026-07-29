@@ -69,5 +69,8 @@ export const installBinary = (name: string, version?: string) =>
   invoke<void>("install_binary", { name, version: version ?? null });
 export const rollbackBinary = (name: string) =>
   invoke<void>("rollback_binary", { name });
+export const uninstallBinary = (name: string) =>
+  invoke<void>("uninstall_binary", { name });
+export const resetComponents = () => invoke<void>("reset_components");
 export const listBinaryVersions = (name: string) =>
   invoke<string[]>("list_binary_versions", { name });

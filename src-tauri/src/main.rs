@@ -496,6 +496,16 @@ fn rollback_binary(app: AppHandle, name: String) -> Result<(), String> {
     binaries::rollback(&app, &name)
 }
 
+#[tauri::command]
+fn uninstall_binary(app: AppHandle, name: String) -> Result<(), String> {
+    binaries::uninstall(&app, &name)
+}
+
+#[tauri::command]
+fn reset_components(app: AppHandle) -> Result<(), String> {
+    binaries::reset_all(&app)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -568,6 +578,8 @@ fn main() {
             get_binaries_status,
             install_binary,
             rollback_binary,
+            uninstall_binary,
+            reset_components,
             list_binary_versions,
             check_app_update,
             collect_diagnostics

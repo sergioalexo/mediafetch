@@ -8,7 +8,9 @@ import {
   ExternalLink,
   Loader2,
   RefreshCw,
+  RotateCcw,
   Terminal,
+  Trash2,
   Undo2,
   XCircle,
 } from "lucide-react";
@@ -29,6 +31,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
 
@@ -41,6 +51,8 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
   const t = useT();
   const [versions, setVersions] = useState<string[] | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // `installing` covers the click-to-first-progress-event gap (and outright
   // failures), so the button can't be double-clicked into concurrent installs.
   const busy =
@@ -97,6 +109,24 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
         description: String(e),
         variant: "error",
       });
+    }
+  };
+
+  const uninstall = async () => {
+    setDeleting(true);
+    try {
+      await api.uninstallBinary(bin.name);
+      toast({ title: t("c.deleted", { name: bin.name }), variant: "success" });
+      await refresh(true);
+    } catch (e) {
+      toast({
+        title: t("c.deleteFailed", { name: bin.name }),
+        description: String(e),
+        variant: "error",
+      });
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
     }
   };
 
@@ -166,6 +196,17 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 title={t("tip.rollback")}
               >
                 <Undo2 className="h-3.5 w-3.5" /> {t("c.rollback")}
+              </Button>
+            )}
+            {bin.managed && bin.installed && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setConfirmDelete(true)}
+                disabled={!!busy}
+                title={t("tip.delete")}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> {t("c.delete")}
               </Button>
             )}
             {!homebrewOnly && (
@@ -255,6 +296,28 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
           </div>
         )}
       </CardContent>
+
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("c.deleteTitle", { name: bin.name })}</DialogTitle>
+            <DialogDescription>{t("c.deleteDesc")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDelete(false)} disabled={deleting}>
+              {t("c.cancel")}
+            </Button>
+            <Button variant="destructive" onClick={uninstall} disabled={deleting}>
+              {deleting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="h-3.5 w-3.5" />
+              )}
+              {t("c.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -390,7 +453,24 @@ export function BinariesPage() {
   const checkAppUpdate = useApp((s) => s.checkAppUpdate);
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
+  const toast = useApp((s) => s.toast);
   const t = useT();
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+
+  const resetAll = async () => {
+    setResetting(true);
+    try {
+      await api.resetComponents();
+      toast({ title: t("c.resetAllDone"), variant: "success" });
+      await refresh(true);
+    } catch (e) {
+      toast({ title: t("c.resetAllFailed"), description: String(e), variant: "error" });
+    } finally {
+      setResetting(false);
+      setConfirmReset(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
@@ -399,19 +479,52 @@ export function BinariesPage() {
           <h1 className="text-xl font-bold">{t("c.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("c.subtitle")}</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            void refresh(true);
-            void checkAppUpdate();
-          }}
-          disabled={loading}
-        >
-          <RefreshCw className={loading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-          {t("c.checkUpdates")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmReset(true)}
+            title={t("tip.resetAll")}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t("c.resetAll")}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void refresh(true);
+              void checkAppUpdate();
+            }}
+            disabled={loading}
+          >
+            <RefreshCw className={loading ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+            {t("c.checkUpdates")}
+          </Button>
+        </div>
       </div>
+
+      <Dialog open={confirmReset} onOpenChange={setConfirmReset}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("c.resetAllTitle")}</DialogTitle>
+            <DialogDescription>{t("c.resetAllDesc")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmReset(false)} disabled={resetting}>
+              {t("c.cancel")}
+            </Button>
+            <Button variant="destructive" onClick={resetAll} disabled={resetting}>
+              {resetting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RotateCcw className="h-3.5 w-3.5" />
+              )}
+              {t("c.resetAll")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {settings && (
         <Card>
