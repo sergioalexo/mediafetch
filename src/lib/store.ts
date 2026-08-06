@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type {
   AnalyzeResult,
+  AppLogLine,
   AppUpdateStatus,
   BinaryProgress,
   BinaryStatus,
@@ -24,7 +25,7 @@ import {
 } from "./presets";
 import { extractUrls } from "./utils";
 
-export type Page = "downloads" | "history" | "stats" | "settings" | "binaries";
+export type Page = "downloads" | "history" | "stats" | "logs" | "settings" | "binaries";
 
 /** A pasted link staged in the Workspace: analyzed but not yet downloading. */
 export interface Draft {
@@ -83,6 +84,11 @@ interface AppState {
   activePreset: () => Preset | null;
   presetById: (id: string) => Preset | null;
   setDefaultPreset: (id: string) => Promise<void>;
+
+  // App-wide log book (every command and line the tools printed).
+  appLog: AppLogLine[];
+  loadAppLog: () => Promise<void>;
+  clearAppLog: () => Promise<void>;
 
   binaries: BinaryStatus[];
   binaryProgress: Record<string, BinaryProgress>;
@@ -224,6 +230,15 @@ export const useApp = create<AppState>((set, get) => ({
     await get().updateSettings({ defaultPresetId: id });
   },
 
+  appLog: [],
+  loadAppLog: async () => {
+    set({ appLog: await api.getAppLog() });
+  },
+  clearAppLog: async () => {
+    await api.clearAppLog();
+    set({ appLog: [] });
+  },
+
   binaries: [],
   binaryProgress: {},
   binariesLoading: false,
@@ -296,6 +311,14 @@ export const useApp = create<AppState>((set, get) => ({
         });
       }
     });
+
+    // The log book streams in live; seed it with whatever was recorded before
+    // the window opened (the startup version line, mainly).
+    await get().loadAppLog();
+    await listen<AppLogLine>("app-log", (e) => {
+      set((s) => ({ appLog: [...s.appLog, e.payload].slice(-5000) }));
+    });
+    await listen("app-log-cleared", () => set({ appLog: [] }));
 
     await listen<BinaryProgress>("binary-progress", (e) => {
       set((s) => ({

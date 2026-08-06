@@ -11,12 +11,17 @@ use tauri::{AppHandle, Emitter, Manager};
 pub const YTDLP: &str = "yt-dlp";
 pub const FFMPEG: &str = "ffmpeg";
 pub const GALLERYDL: &str = "gallery-dl";
+/// The JavaScript runtime yt-dlp uses to solve YouTube's signature and `n`
+/// challenges. Optional, but without one (or Node/Bun on PATH) most YouTube
+/// player clients return storyboard images and no audio or video at all.
+pub const DENO: &str = "deno";
 
 const YTDLP_REPO: &str = "yt-dlp/yt-dlp";
 const FFMPEG_REPO: &str = "BtbN/FFmpeg-Builds";
 /// gallery-dl's own repository publishes no binaries; the project's
 /// standalone executables are built and released here.
 const GALLERYDL_REPO: &str = "gdl-org/builds";
+const DENO_REPO: &str = "denoland/deno";
 
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -34,6 +39,20 @@ const GALLERYDL_ASSET: &str = "gallery-dl_windows.exe";
 const GALLERYDL_ASSET: &str = "gallery-dl_macos";
 #[cfg(all(unix, not(target_os = "macos")))]
 const GALLERYDL_ASSET: &str = "gallery-dl_linux";
+
+// Deno ships one zip per target, each containing a single `deno` executable.
+#[cfg(all(windows, target_arch = "x86_64"))]
+const DENO_ASSET: &str = "deno-x86_64-pc-windows-msvc.zip";
+#[cfg(all(windows, target_arch = "aarch64"))]
+const DENO_ASSET: &str = "deno-aarch64-pc-windows-msvc.zip";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const DENO_ASSET: &str = "deno-aarch64-apple-darwin.zip";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const DENO_ASSET: &str = "deno-x86_64-apple-darwin.zip";
+#[cfg(all(unix, not(target_os = "macos"), target_arch = "aarch64"))]
+const DENO_ASSET: &str = "deno-aarch64-unknown-linux-gnu.zip";
+#[cfg(all(unix, not(target_os = "macos"), target_arch = "x86_64"))]
+const DENO_ASSET: &str = "deno-x86_64-unknown-linux-gnu.zip";
 
 #[cfg(windows)]
 fn exe_name(name: &str) -> String {
@@ -118,6 +137,12 @@ fn find_on_path(exe: &str) -> Option<PathBuf> {
     None
 }
 
+/// Locate a helper executable on PATH by bare name (adds ".exe" on Windows).
+/// Used for the JavaScript runtimes yt-dlp needs for YouTube extraction.
+pub fn find_executable(name: &str) -> Option<PathBuf> {
+    find_on_path(&exe_name(name))
+}
+
 /// Resolve a tool: prefer the managed copy in our bin dir, fall back to PATH.
 /// Returns (path, managed).
 pub fn resolve(app: &AppHandle, name: &str) -> Option<(PathBuf, bool)> {
@@ -154,6 +179,7 @@ fn component_files(name: &str) -> Vec<String> {
     match name {
         YTDLP => vec![exe_name(YTDLP)],
         GALLERYDL => vec![exe_name(GALLERYDL)],
+        DENO => vec![exe_name(DENO)],
         FFMPEG => vec![exe_name(FFMPEG), exe_name("ffprobe"), "ffmpeg.tag".to_string()],
         _ => Vec::new(),
     }
@@ -337,6 +363,7 @@ fn repo_for(name: &str) -> Result<&'static str, String> {
         YTDLP => Ok(YTDLP_REPO),
         FFMPEG => Ok(FFMPEG_REPO),
         GALLERYDL => Ok(GALLERYDL_REPO),
+        DENO => Ok(DENO_REPO),
         other => Err(format!("Unknown binary: {other}")),
     }
 }
@@ -421,6 +448,38 @@ pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus
         latest_version: gallerydl_latest,
         previous_version: previous_exe(app, GALLERYDL)
             .and_then(|p| run_version(&p, "--version")),
+    });
+
+    // ---- deno ----
+    // "deno 2.5.1 (stable, release, x86_64-pc-windows-msvc)" -> "2.5.1", to
+    // compare against release tags like "v2.5.1".
+    let deno = resolve(app, DENO);
+    let deno_version = deno.as_ref().and_then(|(p, _)| {
+        run_version(p, "--version")
+            .and_then(|line| line.split_whitespace().nth(1).map(|v| v.to_string()))
+    });
+    let deno_latest = if check_latest {
+        latest_release(DENO_REPO, &proxy).await.ok().map(|r| r.tag_name)
+    } else {
+        None
+    };
+    out.push(BinaryStatus {
+        name: DENO.into(),
+        repo_url: format!("https://github.com/{DENO_REPO}"),
+        releases_url: format!("https://github.com/{DENO_REPO}/releases"),
+        path: deno.as_ref().map(|(p, _)| p.to_string_lossy().into_owned()),
+        installed: deno.is_some(),
+        managed: deno.as_ref().map(|(_, m)| *m).unwrap_or(false),
+        update_available: match (&deno_version, &deno_latest) {
+            (Some(cur), Some(latest)) => cur != latest.trim_start_matches('v'),
+            _ => false,
+        },
+        current_version: deno_version,
+        latest_version: deno_latest,
+        previous_version: previous_exe(app, DENO).and_then(|p| {
+            run_version(&p, "--version")
+                .and_then(|line| line.split_whitespace().nth(1).map(|v| v.to_string()))
+        }),
     });
 
     // ---- ffmpeg ----
@@ -573,6 +632,43 @@ async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Re
             }
             Ok(())
         }
+        DENO => {
+            let asset = release
+                .assets
+                .iter()
+                .find(|a| a.name == DENO_ASSET)
+                .ok_or_else(|| format!("{DENO_ASSET} not found in this release"))?;
+            let zip_path = dir.join("deno-download.zip");
+            download_with_progress(app, name, &asset.browser_download_url, asset.size, &zip_path)
+                .await?;
+
+            emit_progress(
+                app,
+                BinaryProgress {
+                    name: name.into(),
+                    phase: "extracting".into(),
+                    downloaded: 0,
+                    total: 0,
+                    message: None,
+                },
+            );
+
+            let dest = dir.join(exe_name(DENO));
+            let zip2 = zip_path.clone();
+            let dest2 = dest.clone();
+            tokio::task::spawn_blocking(move || extract_named(&zip2, &exe_name(DENO), &dest2))
+                .await
+                .map_err(|e| e.to_string())??;
+            let _ = std::fs::remove_file(&zip_path);
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        }
         #[cfg(not(windows))]
         FFMPEG => Err(
             "Automatic FFmpeg install is only available on Windows. Install it with \
@@ -626,6 +722,23 @@ async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Re
         }
         other => Err(format!("Unknown binary: {other}")),
     }
+}
+
+/// Pull a single named file out of a zip, wherever it sits inside it.
+fn extract_named(zip_path: &PathBuf, wanted: &str, dest: &PathBuf) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let entry_name = entry.name().replace('\\', "/");
+        let base = entry_name.rsplit('/').next().unwrap_or(&entry_name);
+        if base == wanted {
+            let mut out = std::fs::File::create(dest).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    Err(format!("{wanted} not found inside the downloaded archive"))
 }
 
 #[cfg(windows)]

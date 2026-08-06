@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import type { BinaryStatus } from "@/lib/types";
 import { useApp } from "@/lib/store";
-import { useT } from "@/lib/i18n";
+import { useT, type MsgKey } from "@/lib/i18n";
 import * as api from "@/lib/api";
 import { formatBytes } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -41,6 +41,14 @@ import {
 } from "@/components/ui/dialog";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
+
+/** One line on what each component is actually for. */
+const PURPOSE: Record<string, MsgKey> = {
+  "yt-dlp": "c.purpose.ytdlp",
+  "gallery-dl": "c.purpose.gallerydl",
+  ffmpeg: "c.purpose.ffmpeg",
+  deno: "c.purpose.deno",
+};
 
 function BinaryCard({ bin }: { bin: BinaryStatus }) {
   // No official macOS FFmpeg builds exist upstream — it comes from Homebrew.
@@ -157,6 +165,11 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                   </Badge>
                 )}
               </div>
+              {PURPOSE[bin.name] && (
+                <div className="mt-0.5 max-w-md text-xs text-muted-foreground">
+                  {t(PURPOSE[bin.name])}
+                </div>
+              )}
               <button
                 onClick={() => void api.openExternal(bin.repoUrl)}
                 className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"

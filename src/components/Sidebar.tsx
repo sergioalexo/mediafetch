@@ -1,5 +1,14 @@
 import { motion } from "framer-motion";
-import { Download, History, Moon, Package, BarChart3, Settings, Sun } from "lucide-react";
+import {
+  BarChart3,
+  Download,
+  History,
+  Moon,
+  Package,
+  Settings,
+  Sun,
+  Terminal,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
 import { useApp, type Page } from "@/lib/store";
@@ -12,6 +21,7 @@ const NAV: { page: Page; label: MsgKey; icon: typeof Download }[] = [
   { page: "downloads", label: "nav.download", icon: Download },
   { page: "history", label: "nav.history", icon: History },
   { page: "stats", label: "nav.stats", icon: BarChart3 },
+  { page: "logs", label: "nav.logs", icon: Terminal },
   { page: "binaries", label: "nav.components", icon: Package },
   { page: "settings", label: "nav.settings", icon: Settings },
 ];

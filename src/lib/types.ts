@@ -266,6 +266,19 @@ export interface AppUpdateStatus {
   releasesUrl: string;
 }
 
+// ---- Log book ----
+
+/** One line of the app-wide log book (mirrors downloader::AppLogLine). */
+export interface AppLogLine {
+  seq: number;
+  ts: number; // unix seconds
+  /** Task id, or "analyze:<url>" for an analysis. */
+  source: string;
+  /** Short human label for the source. */
+  scope: string;
+  line: string;
+}
+
 // ---- History ----
 
 export interface HistoryEntry {

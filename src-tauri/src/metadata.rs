@@ -5,6 +5,7 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 use crate::binaries;
+use crate::downloader;
 use crate::settings::Settings;
 
 #[derive(Debug, Clone, Serialize)]
@@ -171,8 +172,14 @@ fn f(v: &Value, key: &str) -> Option<f64> {
     v.get(key).and_then(|x| x.as_f64())
 }
 
-pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<AnalyzeResult, String> {
-    let ytdlp = binaries::ytdlp_path(app)?;
+/// One `yt-dlp -J` run. Returns the JSON on success, or (message, full stderr).
+async fn probe(
+    app: &AppHandle,
+    url: &str,
+    settings: &Settings,
+    pinned_client: bool,
+) -> Result<Vec<u8>, (String, String)> {
+    let ytdlp = binaries::ytdlp_path(app).map_err(|e| (e.clone(), e))?;
 
     let mut cmd = tokio::process::Command::new(&ytdlp);
     // Force UTF-8 stdio — piped output otherwise falls back to the OS ANSI
@@ -181,6 +188,15 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
     cmd.env("PYTHONUTF8", "1");
     cmd.env("PYTHONIOENCODING", "utf-8");
     cmd.args(["-J", "--flat-playlist", "--no-warnings", "--encoding", "utf-8"]);
+    // `-J` still runs format selection, so analysis fails on exactly the same
+    // empty format lists a download would — it has to extract through the same
+    // player clients the downloader uses, or it rejects links that would in
+    // fact have downloaded fine.
+    if pinned_client {
+        cmd.args(downloader::youtube_extractor_args(app));
+    } else {
+        cmd.args(downloader::js_runtime_args(app));
+    }
     if !settings.proxy.is_empty() {
         cmd.args(["--proxy", &settings.proxy]);
     }
@@ -190,6 +206,7 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
         cmd.args(["--cookies-from-browser", &settings.cookies_from_browser]);
     }
     cmd.arg("--").arg(url);
+    cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     #[cfg(windows)]
@@ -197,25 +214,77 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
         cmd.creation_flags(binaries::CREATE_NO_WINDOW);
     }
 
-    let output = cmd.output().await.map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let last = err
-            .lines()
-            .rev()
-            .find(|l| l.contains("ERROR") || !l.trim().is_empty())
-            .unwrap_or("yt-dlp failed");
-        // Photo posts and profile galleries are invisible to yt-dlp — it only
-        // ever sees video formats — so a failure here is exactly where
-        // gallery-dl earns its place.
-        return match analyze_gallery(app, url, settings).await {
-            Some(result) => result,
-            None => Err(last.trim().to_string()),
-        };
+    // Record the command before running it: if this is the attempt that
+    // fails, the user can copy something that reproduces it verbatim.
+    let log_id = downloader::analyze_log_id(url);
+    downloader::push_log(
+        app,
+        &log_id,
+        format!(
+            "$ {} {}",
+            ytdlp.to_string_lossy(),
+            cmd.as_std()
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    );
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| (format!("Failed to run yt-dlp: {e}"), String::new()))?;
+    if output.status.success() {
+        return Ok(output.stdout);
     }
 
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    for line in stderr.lines().filter(|l| !l.trim().is_empty()) {
+        downloader::push_log(app, &log_id, line.trim_end().to_string());
+    }
+    let last = stderr
+        .lines()
+        .rev()
+        .find(|l| l.contains("ERROR") || !l.trim().is_empty())
+        .unwrap_or("yt-dlp failed")
+        .trim()
+        .to_string();
+    Err((last, stderr))
+}
+
+pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<AnalyzeResult, String> {
+    // Start each analysis with a clean transcript so a retry doesn't hand the
+    // user the previous attempt's noise.
+    downloader::clear_log(app, &downloader::analyze_log_id(url));
+
+    let stdout = match probe(app, url, settings, true).await {
+        Ok(out) => out,
+        Err((message, stderr)) => {
+            // An empty format list is often just one bad extraction: yt-dlp's
+            // own client rotation gets a second, differently-signed shot at it.
+            let retried = if downloader::is_no_formats_error(&stderr) {
+                probe(app, url, settings, false).await
+            } else {
+                Err((message, stderr))
+            };
+            match retried {
+                Ok(out) => out,
+                Err((message, _)) => {
+                    // Photo posts and profile galleries are invisible to yt-dlp
+                    // — it only ever sees video formats — so a failure here is
+                    // exactly where gallery-dl earns its place.
+                    return match analyze_gallery(app, url, settings).await {
+                        Some(result) => result,
+                        None => Err(message),
+                    };
+                }
+            }
+        }
+    };
+
     let info: Value =
-        serde_json::from_slice(&output.stdout).map_err(|e| format!("Bad yt-dlp output: {e}"))?;
+        serde_json::from_slice(&stdout).map_err(|e| format!("Bad yt-dlp output: {e}"))?;
 
     let is_playlist = info.get("_type").and_then(|t| t.as_str()) == Some("playlist");
 

@@ -10,11 +10,13 @@ import { HistoryPage } from "@/pages/HistoryPage";
 import { StatsPage } from "@/pages/StatsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { BinariesPage } from "@/pages/BinariesPage";
+import { LogsPage } from "@/pages/LogsPage";
 
 const PAGES = {
   downloads: WorkspacePage,
   history: HistoryPage,
   stats: StatsPage,
+  logs: LogsPage,
   settings: SettingsPage,
   binaries: BinariesPage,
 } as const;

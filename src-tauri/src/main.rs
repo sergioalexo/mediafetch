@@ -117,6 +117,17 @@ fn get_task_log(app: AppHandle, id: String) -> Vec<String> {
     downloader::get_log(&app, &id)
 }
 
+/// The app-wide log book — everything the app has run this session.
+#[tauri::command]
+fn get_app_log() -> Vec<downloader::AppLogLine> {
+    downloader::app_log_all()
+}
+
+#[tauri::command]
+fn clear_app_log(app: AppHandle) {
+    downloader::app_log_clear(&app);
+}
+
 #[tauri::command]
 fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) {
     {
@@ -533,6 +544,27 @@ fn main() {
             let auto_update = loaded.auto_update_ytdlp;
             app.manage(AppState::new(loaded));
 
+            // Open the log book with the versions any bug report needs — and
+            // with whether a JS runtime was found, which decides whether
+            // YouTube extraction works at all.
+            downloader::push_log(
+                &handle,
+                "app",
+                format!(
+                    "MediaFetch {} on {} {} · yt-dlp {} · ffmpeg {} · JS runtime: {}",
+                    handle.package_info().version,
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                    binaries::tool_version(&handle, binaries::YTDLP)
+                        .unwrap_or_else(|| "not installed".into()),
+                    binaries::tool_version(&handle, binaries::FFMPEG)
+                        .unwrap_or_else(|| "not installed".into()),
+                    downloader::js_runtime_spec(&handle).unwrap_or_else(
+                        || "none — install Deno from Components, or YouTube formats may be missing".into(),
+                    ),
+                ),
+            );
+
             if auto_update {
                 let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
@@ -559,6 +591,8 @@ fn main() {
             preview_command,
             get_queue,
             get_task_log,
+            get_app_log,
+            clear_app_log,
             enqueue,
             pause_task,
             resume_task,

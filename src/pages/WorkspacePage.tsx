@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import type { DownloadOptions, DownloadTask, Preset } from "@/lib/types";
 import { buildDraftItems, draftPlan, useApp, type Draft } from "@/lib/store";
-import { useT } from "@/lib/i18n";
+import { useT, type MsgKey } from "@/lib/i18n";
 import {
   isAlreadyDownloaded,
   optionsFromPreset,
@@ -386,6 +386,22 @@ export function WorkspacePage() {
   );
 }
 
+/**
+ * Copy a failed analysis: the URL, the error, and the yt-dlp transcript behind
+ * it (the command line included), so it can be pasted straight into a report.
+ */
+async function copyAnalyzeFailure(draft: Draft, t: (k: MsgKey) => string) {
+  const { toast } = useApp.getState();
+  const lines = await api.getTaskLog(`analyze:${draft.url}`).catch(() => [] as string[]);
+  const text = [draft.url, "", draft.error ?? "", "", ...lines].join("\n").trim();
+  try {
+    await navigator.clipboard.writeText(text);
+    toast({ title: t("ws.errorCopied"), variant: "success" });
+  } catch {
+    toast({ title: t("dl.clipboardUnavailable"), variant: "error" });
+  }
+}
+
 /** One staged, analyzed (or analyzing) link. */
 function DraftCard({ draft }: { draft: Draft }) {
   const settings = useApp((s) => s.settings);
@@ -465,19 +481,34 @@ function DraftCard({ draft }: { draft: Draft }) {
       )}
 
       {draft.status === "error" && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="min-w-0 flex-1 truncate text-muted-foreground" title={draft.error ?? ""}>
-            {draft.url}
-          </span>
-          <Badge variant="destructive" className="shrink-0">
-            {t("ws.errorStatus")}
-          </Badge>
-          <Button variant="ghost" size="sm" onClick={() => addUrls(draft.url)}>
-            {t("ws.retryAnalyze")}
-          </Button>
-          <Button variant="ghost" size="iconSm" onClick={() => removeDraft(draft.id)}>
-            <X className="h-3.5 w-3.5" />
-          </Button>
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="min-w-0 flex-1 truncate text-muted-foreground" title={draft.url}>
+              {draft.url}
+            </span>
+            <Badge variant="destructive" className="shrink-0">
+              {t("ws.errorStatus")}
+            </Badge>
+            <Button variant="ghost" size="sm" onClick={() => addUrls(draft.url)}>
+              {t("ws.retryAnalyze")}
+            </Button>
+            <Button variant="ghost" size="iconSm" onClick={() => removeDraft(draft.id)}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          {draft.error && (
+            // What yt-dlp actually said, in full, with a way to take it
+            // somewhere useful — the tooltip it used to live in was unusable.
+            <div className="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">
+              <div className="break-words">{draft.error}</div>
+              <button
+                onClick={() => void copyAnalyzeFailure(draft, t)}
+                className="mt-1 flex items-center gap-1 underline underline-offset-2 opacity-70 hover:opacity-100"
+              >
+                <Terminal className="h-3 w-3" /> {t("ws.copyError")}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

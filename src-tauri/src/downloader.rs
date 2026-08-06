@@ -2,7 +2,7 @@
 //! enforces the parallel-download limit and drives pause/resume/retry.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -40,8 +40,69 @@ struct TaskLogLine {
     line: String,
 }
 
+/// One line of the app-wide log book, tagged with where it came from. Per-task
+/// transcripts get cleared on retry and dropped with the task; this is the
+/// record that survives to be copied after the fact.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppLogLine {
+    pub seq: u64,
+    pub ts: u64,
+    /// Task id, or "analyze:<url>" for an analysis.
+    pub source: String,
+    /// Short human label for the source (task title, or "analyze").
+    pub scope: String,
+    pub line: String,
+}
+
+/// The app-wide log book. Separate from the per-task transcripts on purpose:
+/// those are scoped to one attempt of one task, and this has to answer "what
+/// did the app just do?" after that task is gone.
+static APP_LOG: OnceLock<Mutex<(u64, VecDeque<AppLogLine>)>> = OnceLock::new();
+
+fn app_log() -> &'static Mutex<(u64, VecDeque<AppLogLine>)> {
+    APP_LOG.get_or_init(|| Mutex::new((0, VecDeque::new())))
+}
+
+pub fn app_log_all() -> Vec<AppLogLine> {
+    app_log().lock().unwrap().1.iter().cloned().collect()
+}
+
+pub fn app_log_clear(app: &AppHandle) {
+    {
+        let mut book = app_log().lock().unwrap();
+        book.1.clear();
+    }
+    let _ = app.emit("app-log-cleared", ());
+}
+
+/// Human label for a log source: the task's title, or "analyze" for an
+/// analysis run, falling back to the raw id.
+fn scope_for(app: &AppHandle, id: &str) -> String {
+    if let Some(url) = id.strip_prefix("analyze:") {
+        return format!("analyze {url}");
+    }
+    let state = app.state::<AppState>();
+    let queue = state.queue.lock().unwrap();
+    queue
+        .iter()
+        .find(|t| t.id == id)
+        .map(|t| {
+            let title = if t.title.trim().is_empty() { &t.url } else { &t.title };
+            title.chars().take(60).collect()
+        })
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// Log id for a URL analysis. Analyses aren't queue tasks, but they run the
+/// same tool and fail the same ways, so they share the transcript store —
+/// which is what lets the UI hand the user a copyable failure.
+pub fn analyze_log_id(url: &str) -> String {
+    format!("analyze:{url}")
+}
+
 /// Append one line to a task's transcript and notify any open log viewer.
-fn push_log(app: &AppHandle, id: &str, line: String) {
+pub fn push_log(app: &AppHandle, id: &str, line: String) {
     let state = app.state::<AppState>();
     {
         let mut logs = state.logs.lock().unwrap();
@@ -52,6 +113,23 @@ fn push_log(app: &AppHandle, id: &str, line: String) {
             buf.drain(0..excess);
         }
     }
+    let entry = {
+        let mut book = app_log().lock().unwrap();
+        book.0 += 1;
+        let entry = AppLogLine {
+            seq: book.0,
+            ts: now_unix(),
+            source: id.to_string(),
+            scope: scope_for(app, id),
+            line: line.clone(),
+        };
+        if book.1.len() >= LOG_CAP {
+            book.1.pop_front();
+        }
+        book.1.push_back(entry.clone());
+        entry
+    };
+
     let _ = app.emit(
         "task-log",
         &TaskLogLine {
@@ -59,6 +137,7 @@ fn push_log(app: &AppHandle, id: &str, line: String) {
             line,
         },
     );
+    let _ = app.emit("app-log", &entry);
 }
 
 pub fn get_log(app: &AppHandle, id: &str) -> Vec<String> {
@@ -140,6 +219,101 @@ pub fn kill_tree(pid: u32) {
 /// env vars stay for the case where yt-dlp resolves to a plain-Python install
 /// on PATH, where they do work.
 const ENCODING_ARGS: [&str; 2] = ["--encoding", "utf-8"];
+
+/// The pinned YouTube player client, and the JS runtime yt-dlp needs to make
+/// any of them work. Shared by downloads and analysis — when the two disagree,
+/// analysis rejects links the downloader could have fetched perfectly well.
+///
+/// Prefer "android_vr": as of mid-2026 the web-family clients return zero
+/// playable formats for otherwise-normal videos (surfacing as "Requested
+/// format is not available") once YouTube's bot/PO-token checks kick in, while
+/// android_vr still serves full format lists without a token. "web" stays as a
+/// fallback so cookie-gated (private/members-only) videos, which android_vr
+/// can't authenticate for, still resolve.
+pub fn youtube_extractor_args(app: &AppHandle) -> Vec<String> {
+    let mut args = vec![
+        "--extractor-args".into(),
+        "youtube:player_client=android_vr,web".into(),
+    ];
+    args.extend(js_runtime_args(app));
+    args
+}
+
+/// yt-dlp solves YouTube's signature and `n` challenges with a JavaScript
+/// runtime, and only enables Deno by default. Without one, most player clients
+/// hand back storyboard images and nothing else. If Deno is missing but
+/// another supported runtime is installed, point yt-dlp at it explicitly — GUI
+/// apps don't inherit a login shell's PATH, so the full path goes along.
+pub fn js_runtime_args(app: &AppHandle) -> Vec<String> {
+    match js_runtime_spec(app) {
+        Some(spec) if ytdlp_supports_js_runtimes(app) => vec!["--js-runtimes".into(), spec],
+        _ => Vec::new(),
+    }
+}
+
+/// The runtime to hand yt-dlp, as `name:path`. Deno first (yt-dlp's own
+/// preference), including a copy MediaFetch manages in its bin dir — that one
+/// isn't on PATH, so yt-dlp would never find it on its own. Deliberately
+/// uncached: installing Deno from the Components page has to take effect on
+/// the very next download, not the next launch.
+pub fn js_runtime_spec(app: &AppHandle) -> Option<String> {
+    if let Some((path, _)) = binaries::resolve(app, binaries::DENO) {
+        return Some(format!("deno:{}", path.to_string_lossy()));
+    }
+    ["node", "bun"].iter().find_map(|name| {
+        binaries::find_executable(name).map(|path| format!("{name}:{}", path.to_string_lossy()))
+    })
+}
+
+/// `--js-runtimes` is a recent flag and the Components page can roll yt-dlp
+/// back to a build that would reject it outright. Cached per binary (size +
+/// mtime), so an install or rollback re-checks by itself.
+fn ytdlp_supports_js_runtimes(app: &AppHandle) -> bool {
+    static CACHE: OnceLock<Mutex<Option<((u64, u64), bool)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+
+    let Ok(path) = binaries::ytdlp_path(app) else {
+        return false;
+    };
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return false;
+    };
+    let stamp = (
+        meta.len(),
+        meta.modified()
+            .ok()
+            .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    );
+    if let Some((cached, supported)) = *cache.lock().unwrap() {
+        if cached == stamp {
+            return supported;
+        }
+    }
+
+    let mut cmd = std::process::Command::new(&path);
+    cmd.arg("--help");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(binaries::CREATE_NO_WINDOW);
+    }
+    let supported = cmd
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("--js-runtimes"))
+        .unwrap_or(false);
+    *cache.lock().unwrap() = Some((stamp, supported));
+    supported
+}
+
+/// True when a failure looks like YouTube handed back an empty format list —
+/// worth one more go through different player clients.
+pub fn is_no_formats_error(text: &str) -> bool {
+    text.contains("Requested format is not available")
+        || text.contains("Only images are available")
+        || text.contains("Failed to extract any player response")
+}
 
 fn force_utf8_io(cmd: &mut tokio::process::Command) {
     cmd.env("PYTHONUTF8", "1");
@@ -292,22 +466,16 @@ pub fn build_args(
         args.extend(["--ffmpeg-location".into(), ffdir.to_string_lossy().into_owned()]);
     }
 
-    // Prefer the "android_vr" YouTube player client: as of mid-2026 the
-    // "web"/"ios"/"mweb" clients frequently return zero playable formats for
-    // otherwise-normal videos (surfacing as "Requested format is not
-    // available") once YouTube's bot/PO-token checks kick in, while
-    // android_vr still serves full format lists without a token. Keep "web"
-    // as a fallback so cookie-gated (private/members-only) videos, which
-    // android_vr can't authenticate for, still resolve.
+    // The pinned player client and JS runtime (see youtube_extractor_args).
     //
-    // A retry after an HTTP 403 drops the pin instead: those media URLs are
-    // dead for good, so the retry is only worth anything if it re-extracts
-    // through different clients than the ones that just got refused.
-    if !tweaks.default_player_client {
-        args.extend([
-            "--extractor-args".into(),
-            "youtube:player_client=android_vr,web".into(),
-        ]);
+    // A retry after an HTTP 403 drops the client pin instead: those media URLs
+    // are dead for good, so the retry is only worth anything if it re-extracts
+    // through different clients than the ones that just got refused. The JS
+    // runtime still applies — those clients need it more, not less.
+    if tweaks.default_player_client {
+        args.extend(js_runtime_args(app));
+    } else {
+        args.extend(youtube_extractor_args(app));
     }
 
     // Network
