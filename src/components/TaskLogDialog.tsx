@@ -20,6 +20,9 @@ interface TaskLogLine {
   line: string;
 }
 
+/** Matches the backend's per-task cap, so the dialog can't outgrow its source. */
+const LOG_LIMIT = 5000;
+
 /** Live stdout/stderr transcript for one task — the "open a terminal" view. */
 export function TaskLogDialog({
   taskId,
@@ -38,16 +41,38 @@ export function TaskLogDialog({
   useEffect(() => {
     if (!taskId) return;
     let cancelled = false;
+    // Streamed lines are buffered until the initial fetch lands, so its
+    // setLines can't clobber whatever arrived while it was in flight, and so a
+    // chatty download doesn't rebuild the array once per line.
+    let ready = false;
+    let pending: string[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = () => {
+      timer = null;
+      if (!ready || cancelled || pending.length === 0) return;
+      const batch = pending;
+      pending = [];
+      setLines((prev) => [...prev, ...batch].slice(-LOG_LIMIT));
+    };
+
     setLines([]);
     void api.getTaskLog(taskId).then((initial) => {
-      if (!cancelled) setLines(initial);
+      if (cancelled) return;
+      setLines(initial.slice(-LOG_LIMIT));
+      ready = true;
+      flush();
     });
+
     const unlisten = listen<TaskLogLine>("task-log", (e) => {
-      if (e.payload.id !== taskId) return;
-      setLines((prev) => [...prev, e.payload.line]);
+      if (e.payload.id !== taskId || cancelled) return;
+      pending.push(e.payload.line);
+      if (timer === null) timer = setTimeout(flush, 150);
     });
+
     return () => {
       cancelled = true;
+      if (timer !== null) clearTimeout(timer);
       void unlisten.then((f) => f());
     };
   }, [taskId]);

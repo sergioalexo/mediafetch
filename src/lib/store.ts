@@ -27,6 +27,13 @@ import { extractUrls } from "./utils";
 
 export type Page = "downloads" | "history" | "stats" | "logs" | "settings" | "binaries";
 
+/** Log lines held in the UI. Matches the backend ring buffer's capacity. */
+const LOG_LIMIT = 5000;
+
+// Incoming log lines are batched (see the "app-log" listener in init).
+const logBuffer: AppLogLine[] = [];
+let logFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
 /** A pasted link staged in the Workspace: analyzed but not yet downloading. */
 export interface Draft {
   id: string;
@@ -315,10 +322,25 @@ export const useApp = create<AppState>((set, get) => ({
     // The log book streams in live; seed it with whatever was recorded before
     // the window opened (the startup version line, mainly).
     await get().loadAppLog();
+    // Buffered: a verbose download emits hundreds of lines a second, and
+    // appending one at a time rebuilt the whole 5000-line array — and
+    // re-rendered the log page — for every one of them.
     await listen<AppLogLine>("app-log", (e) => {
-      set((s) => ({ appLog: [...s.appLog, e.payload].slice(-5000) }));
+      logBuffer.push(e.payload);
+      if (logFlushTimer === null) {
+        logFlushTimer = setTimeout(() => {
+          logFlushTimer = null;
+          const batch = logBuffer.splice(0, logBuffer.length);
+          if (batch.length > 0) {
+            set((s) => ({ appLog: [...s.appLog, ...batch].slice(-LOG_LIMIT) }));
+          }
+        }, 150);
+      }
     });
-    await listen("app-log-cleared", () => set({ appLog: [] }));
+    await listen("app-log-cleared", () => {
+      logBuffer.length = 0;
+      set({ appLog: [] });
+    });
 
     await listen<BinaryProgress>("binary-progress", (e) => {
       set((s) => ({

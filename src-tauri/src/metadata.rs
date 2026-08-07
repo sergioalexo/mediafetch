@@ -283,6 +283,11 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
         }
     };
 
+    // Nothing needs the transcript of an analysis that worked, and these are
+    // keyed by URL — keeping them would grow the log store for the whole
+    // session, one entry per link the user ever pasted.
+    downloader::clear_log(app, &downloader::analyze_log_id(url));
+
     let info: Value =
         serde_json::from_slice(&stdout).map_err(|e| format!("Bad yt-dlp output: {e}"))?;
 

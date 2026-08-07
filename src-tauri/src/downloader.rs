@@ -113,6 +113,11 @@ pub fn push_log(app: &AppHandle, id: &str, line: String) {
             buf.drain(0..excess);
         }
     }
+    // Resolved before the log lock is taken. scope_for reads the queue, and
+    // taking queue-inside-log here while every other path takes them the other
+    // way round is how an ABBA deadlock gets built.
+    let scope = scope_for(app, id);
+
     let entry = {
         let mut book = app_log().lock().unwrap();
         book.0 += 1;
@@ -120,7 +125,7 @@ pub fn push_log(app: &AppHandle, id: &str, line: String) {
             seq: book.0,
             ts: now_unix(),
             source: id.to_string(),
-            scope: scope_for(app, id),
+            scope,
             line: line.clone(),
         };
         if book.1.len() >= LOG_CAP {
@@ -422,9 +427,13 @@ pub fn build_args(
     let mut args: Vec<String> = Vec::new();
     let is_audio = opts.kind == "audio";
 
+    // Warnings are deliberately kept. They carry the reason a format went
+    // missing ("Only images are available for download", "…requires a GVS PO
+    // Token"), which is exactly what the log book exists to show — suppressing
+    // them left a bare "Requested format is not available" and no way to tell
+    // why. Error reporting is unaffected: it looks for ERROR lines first.
     args.extend([
         "--newline".into(),
-        "--no-warnings".into(),
         ENCODING_ARGS[0].into(),
         ENCODING_ARGS[1].into(),
         "--progress-template".into(),
@@ -814,6 +823,11 @@ async fn probe_abr(app: &AppHandle, url: &str, settings: &Settings) -> Option<f6
         "--no-warnings",
     ]);
     cmd.args(ENCODING_ARGS);
+    // Extract through the same player client the download will use. Without
+    // this the probe hits YouTube's empty format lists, returns nothing, and
+    // "match source" quietly encodes at the 192 kbps fallback — below the
+    // source — on exactly the tracks the download itself handles fine.
+    cmd.args(youtube_extractor_args(app));
     if !settings.proxy.trim().is_empty() {
         cmd.args(["--proxy", settings.proxy.trim()]);
     }

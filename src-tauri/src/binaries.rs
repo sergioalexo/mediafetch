@@ -390,18 +390,32 @@ pub async fn list_versions(app: &AppHandle, name: &str) -> Result<Vec<String>, S
         .collect())
 }
 
+/// Latest release tag, or None when the lookup fails (offline, rate limited).
+async fn latest_tag_opt(repo: &str, proxy: &str) -> Option<String> {
+    latest_release(repo, proxy).await.ok().map(|r| r.tag_name)
+}
+
 pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus> {
     let mut out = Vec::new();
     let proxy = app_proxy(app);
 
+    // One round trip, not four. These were awaited one after another, so the
+    // Components page — and every app start, which refreshes it — waited for
+    // the sum of four GitHub requests instead of the slowest one.
+    let (ytdlp_latest, gallerydl_latest, deno_latest, ffmpeg_latest) = if check_latest {
+        tokio::join!(
+            latest_tag_opt(YTDLP_REPO, &proxy),
+            latest_tag_opt(GALLERYDL_REPO, &proxy),
+            latest_tag_opt(DENO_REPO, &proxy),
+            latest_tag_opt(FFMPEG_REPO, &proxy),
+        )
+    } else {
+        (None, None, None, None)
+    };
+
     // ---- yt-dlp ----
     let ytdlp = resolve(app, YTDLP);
     let ytdlp_version = ytdlp.as_ref().and_then(|(p, _)| run_version(p, "--version"));
-    let ytdlp_latest = if check_latest {
-        latest_release(YTDLP_REPO, &proxy).await.ok().map(|r| r.tag_name)
-    } else {
-        None
-    };
     out.push(BinaryStatus {
         name: YTDLP.into(),
         repo_url: format!("https://github.com/{YTDLP_REPO}"),
@@ -423,14 +437,6 @@ pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus
     let gallerydl_version = gallerydl
         .as_ref()
         .and_then(|(p, _)| run_version(p, "--version"));
-    let gallerydl_latest = if check_latest {
-        latest_release(GALLERYDL_REPO, &proxy)
-            .await
-            .ok()
-            .map(|r| r.tag_name)
-    } else {
-        None
-    };
     out.push(BinaryStatus {
         name: GALLERYDL.into(),
         repo_url: "https://github.com/mikf/gallery-dl".into(),
@@ -458,11 +464,6 @@ pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus
         run_version(p, "--version")
             .and_then(|line| line.split_whitespace().nth(1).map(|v| v.to_string()))
     });
-    let deno_latest = if check_latest {
-        latest_release(DENO_REPO, &proxy).await.ok().map(|r| r.tag_name)
-    } else {
-        None
-    };
     out.push(BinaryStatus {
         name: DENO.into(),
         repo_url: format!("https://github.com/{DENO_REPO}"),
@@ -494,11 +495,6 @@ pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus
         })
     });
     let installed_tag = ffmpeg_installed_tag(app);
-    let ffmpeg_latest = if check_latest {
-        latest_release(FFMPEG_REPO, &proxy).await.ok().map(|r| r.tag_name)
-    } else {
-        None
-    };
     let managed = ffmpeg.as_ref().map(|(_, m)| *m).unwrap_or(false);
     out.push(BinaryStatus {
         name: FFMPEG.into(),
