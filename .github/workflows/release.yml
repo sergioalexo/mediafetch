@@ -59,6 +59,20 @@ jobs:
 
             The other files (`.sig`, `.app.tar.gz`, `latest.json`) are used by the in-app updater — you don't need to download them manually.
 
+            ### 🔒 Verifying your download
+
+            `SHA256SUMS-windows.txt` and `SHA256SUMS-macos.txt` hold the SHA-256 hash of the installer above. To check that the file you downloaded is byte-for-byte the one built here, run:
+
+            ```
+            # Windows (PowerShell)
+            Get-FileHash .\MediaFetch_x.y.z_x64-setup.exe -Algorithm SHA256
+
+            # macOS
+            shasum -a 256 MediaFetch_x.y.z_universal.dmg
+            ```
+
+            and compare the hash with the one in the matching `SHA256SUMS` file. The app itself is not code-signed yet, which is why Windows and macOS still show their first-launch warnings.
+
             ### 🪟 Windows
             Download the `.exe` and run it. If SmartScreen shows "Windows protected your PC", click **More info → Run anyway**.
 
@@ -67,6 +81,39 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Publish the installer's SHA-256 hash so a download can be verified
+      # against what this workflow actually built. One file per platform: both
+      # matrix jobs upload to the same release and would otherwise overwrite
+      # each other.
+      - name: Publish SHA-256 checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            os=windows
+            suffix="_x64-setup.exe"
+          else
+            os=macos
+            suffix="_universal.dmg"
+          fi
+          # macOS ships shasum, not sha256sum.
+          if command -v sha256sum >/dev/null 2>&1; then
+            hash_cmd="sha256sum"
+          else
+            hash_cmd="shasum -a 256"
+          fi
+          # A relative directory keeps the paths portable across the Windows
+          # (git-bash) and macOS runners.
+          rm -rf checksums && mkdir checksums
+          gh release download "$TAG" --repo "$REPO" --pattern "*$suffix" --dir checksums
+          (cd checksums && $hash_cmd *"$suffix" > "SHA256SUMS-$os.txt")
+          cat "checksums/SHA256SUMS-$os.txt"
+          gh release upload "$TAG" "checksums/SHA256SUMS-$os.txt" --repo "$REPO" --clobber
 
       # Give the human-facing installers a clear, OS-labeled name on the release
       # page so people know which one to pick. Only the manual-download artifacts
