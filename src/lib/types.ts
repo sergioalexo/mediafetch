@@ -160,7 +160,8 @@ export interface Settings {
   restrictFilenames: boolean;
   /** Auto re-queue a failed download this many times before leaving it Failed. 0 disables. */
   autoRetryLimit: number;
-  theme: "dark" | "light";
+  /** "auto" follows the OS light/dark preference. */
+  theme: "auto" | "dark" | "light";
   presets: Preset[];
   defaultPresetId: string;
   /** Per-service default preset overrides: service key -> preset id. */

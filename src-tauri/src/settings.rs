@@ -47,6 +47,7 @@ pub const SOCIAL_MEDIA_PRESET_ID: &str = "social-media";
 /// Marker for the one-time seeding of [`social_media_preset`] into settings
 /// files written before it existed. Recorded so deleting the preset sticks.
 const SOCIAL_MEDIA_MIGRATION: &str = "social-media-preset";
+const AUTO_THEME_MIGRATION: &str = "auto-theme";
 
 /// Photos *and* videos, exactly as the site stores them. The "media" quality
 /// preset resolves to a single progressive file, which is the only thing an
@@ -147,6 +148,7 @@ pub struct Settings {
     /// Automatically re-queue a failed download this many times before
     /// leaving it Failed for the user to handle. 0 disables auto-retry.
     pub auto_retry_limit: u32,
+    /// "auto" (follow the OS), "dark" or "light".
     pub theme: String,
     // Named per-download presets and the one selected as default.
     pub presets: Vec<Preset>,
@@ -188,7 +190,7 @@ impl Default for Settings {
             auto_update_ytdlp: false,
             restrict_filenames: false,
             auto_retry_limit: 2,
-            theme: "dark".into(),
+            theme: "auto".into(),
             presets: default_presets(),
             default_preset_id: "video-best".into(),
             service_presets: std::collections::HashMap::new(),
@@ -242,6 +244,13 @@ pub fn load(app: &AppHandle) -> Settings {
             .service_presets
             .entry("instagram".into())
             .or_insert_with(|| SOCIAL_MEDIA_PRESET_ID.into());
+        let _ = save(app, &settings);
+    }
+    // Theme used to be a dark/light toggle defaulting to dark; move existing
+    // installs onto the new "follow the system" default once.
+    if !settings.migrations.iter().any(|m| m == AUTO_THEME_MIGRATION) {
+        settings.migrations.push(AUTO_THEME_MIGRATION.into());
+        settings.theme = "auto".into();
         let _ = save(app, &settings);
     }
     settings

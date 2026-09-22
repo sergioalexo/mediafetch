@@ -13,12 +13,15 @@ import {
   Layers,
   Lightbulb,
   LifeBuoy,
+  MonitorCog,
+  Moon,
   Pencil,
   Plus,
   ScrollText,
   Shield,
   ShieldAlert,
   SlidersHorizontal,
+  Sun,
 } from "lucide-react";
 import type { CookieCheck, Preset, Settings } from "@/lib/types";
 import { useApp } from "@/lib/store";
@@ -170,6 +173,33 @@ export function SettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="divide-y divide-border/60">
+          <Row label={t("set.theme")} hint={t("set.themeHint")}>
+            <Select
+              value={settings.theme ?? "auto"}
+              onValueChange={(v) => set({ theme: v as Settings["theme"] })}
+            >
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">
+                  <span className="flex items-center gap-2">
+                    <MonitorCog className="h-4 w-4" /> {t("theme.auto")}
+                  </span>
+                </SelectItem>
+                <SelectItem value="light">
+                  <span className="flex items-center gap-2">
+                    <Sun className="h-4 w-4" /> {t("theme.light")}
+                  </span>
+                </SelectItem>
+                <SelectItem value="dark">
+                  <span className="flex items-center gap-2">
+                    <Moon className="h-4 w-4" /> {t("theme.dark")}
+                  </span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </Row>
           <Row label={t("set.language")}>
             <Select
               value={settings.language ?? "en"}

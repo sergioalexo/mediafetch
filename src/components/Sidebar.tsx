@@ -3,10 +3,8 @@ import {
   BarChart3,
   Download,
   History,
-  Moon,
   Package,
   Settings,
-  Sun,
   Terminal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -31,9 +29,6 @@ export function Sidebar() {
   const setPage = useApp((s) => s.setPage);
   const queue = useApp((s) => s.queue);
   const binaries = useApp((s) => s.binaries);
-  const settings = useApp((s) => s.settings);
-  const updateSettings = useApp((s) => s.updateSettings);
-
   const appUpdate = useApp((s) => s.appUpdate);
   const t = useT();
 
@@ -114,20 +109,6 @@ export function Sidebar() {
           );
         })}
       </nav>
-
-      <div className="border-t p-3">
-        <button
-          onClick={() =>
-            updateSettings({ theme: settings?.theme === "dark" ? "light" : "dark" })
-          }
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          {settings?.theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          <span className="font-medium">
-            {settings?.theme === "dark" ? t("theme.light") : t("theme.dark")}
-          </span>
-        </button>
-      </div>
     </aside>
   );
 }

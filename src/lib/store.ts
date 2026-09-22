@@ -133,7 +133,7 @@ export const useApp = create<AppState>((set, get) => ({
     if (!cur) return;
     const next = { ...cur, ...patch };
     set({ settings: next });
-    if (patch.theme) applyTheme(patch.theme);
+    if (patch.theme !== undefined) applyTheme(patch.theme);
     await api.saveSettings(next);
   },
 
@@ -363,7 +363,28 @@ export const useApp = create<AppState>((set, get) => ({
   },
 }));
 
-function applyTheme(theme: "dark" | "light") {
+// "auto" tracks the OS preference live, so the window follows Windows/macOS
+// flipping to dark without a restart. Older settings files say "dark"/"light".
+const systemDark =
+  typeof window !== "undefined" && window.matchMedia
+    ? window.matchMedia("(prefers-color-scheme: dark)")
+    : null;
+let unwatchSystem: (() => void) | null = null;
+
+function applyTheme(theme: Settings["theme"]) {
+  unwatchSystem?.();
+  unwatchSystem = null;
+
+  if (theme === "auto") {
+    const sync = () =>
+      document.documentElement.classList.toggle("dark", !!systemDark?.matches);
+    sync();
+    if (systemDark) {
+      systemDark.addEventListener("change", sync);
+      unwatchSystem = () => systemDark.removeEventListener("change", sync);
+    }
+    return;
+  }
   document.documentElement.classList.toggle("dark", theme === "dark");
 }
 
