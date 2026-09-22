@@ -61,11 +61,13 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
   const [installing, setInstalling] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // A progress event only arrives once the backend is actually moving bytes, so
+  // between the click and that first event there is nothing to report on yet.
+  const active =
+    !!progress && (progress.phase === "downloading" || progress.phase === "extracting");
   // `installing` covers the click-to-first-progress-event gap (and outright
   // failures), so the button can't be double-clicked into concurrent installs.
-  const busy =
-    installing ||
-    (progress && (progress.phase === "downloading" || progress.phase === "extracting"));
+  const busy = installing || active;
 
   const install = async (version?: string) => {
     if (installing) return;
@@ -191,7 +193,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 </div>
               )
             ) : bin.installed && !bin.updateAvailable ? null : (
-              <Button size="sm" onClick={() => install()} disabled={!!busy}>
+              <Button size="sm" onClick={() => install()} disabled={busy}>
                 {busy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
@@ -205,7 +207,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 size="sm"
                 variant="outline"
                 onClick={rollback}
-                disabled={!!busy}
+                disabled={busy}
                 title={t("tip.rollback")}
               >
                 <Undo2 className="h-3.5 w-3.5" /> {t("c.rollback")}
@@ -216,7 +218,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
                 size="sm"
                 variant="outline"
                 onClick={() => setConfirmDelete(true)}
-                disabled={!!busy}
+                disabled={busy}
                 title={t("tip.delete")}
               >
                 <Trash2 className="h-3.5 w-3.5" /> {t("c.delete")}
@@ -229,7 +231,7 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
               onOpenChange={(open) => {
                 if (open) void loadVersions();
               }}
-              disabled={!!busy}
+              disabled={busy}
             >
               <SelectTrigger className="h-8 w-44 text-xs" title={t("tip.otherVersion")}>
                 <SelectValue placeholder={t("c.otherVersion")} />
@@ -290,15 +292,19 @@ function BinaryCard({ bin }: { bin: BinaryStatus }) {
           <div className="mt-3">
             <Progress
               value={
-                progress.total > 0 ? (progress.downloaded / progress.total) * 100 : undefined
+                active && progress.total > 0
+                  ? (progress.downloaded / progress.total) * 100
+                  : undefined
               }
             />
             <div className="mt-1 text-xs text-muted-foreground">
-              {progress.phase === "extracting"
-                ? t("c.extracting")
-                : `${t("c.downloading")} ${formatBytes(progress.downloaded)}${
-                    progress.total > 0 ? ` / ${formatBytes(progress.total)}` : ""
-                  }`}
+              {!active
+                ? t("c.starting")
+                : progress.phase === "extracting"
+                  ? t("c.extracting")
+                  : `${t("c.downloading")} ${formatBytes(progress.downloaded)}${
+                      progress.total > 0 ? ` / ${formatBytes(progress.total)}` : ""
+                    }`}
             </div>
           </div>
         )}
