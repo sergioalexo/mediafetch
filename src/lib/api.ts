@@ -29,8 +29,9 @@ export const getQueue = () => invoke<DownloadTask[]>("get_queue");
 export const getTaskLog = (id: string) => invoke<string[]>("get_task_log", { id });
 export const getAppLog = () => invoke<AppLogLine[]>("get_app_log");
 export const clearAppLog = () => invoke<void>("clear_app_log");
+/** Queues the items and resolves with how many were skipped as duplicates. */
 export const enqueue = (items: DownloadOptions[]) =>
-  invoke<void>("enqueue", { items });
+  invoke<number>("enqueue", { items });
 export const pauseTask = (id: string) => invoke<void>("pause_task", { id });
 export const resumeTask = (id: string) => invoke<void>("resume_task", { id });
 export const cancelTask = (id: string) => invoke<void>("cancel_task", { id });

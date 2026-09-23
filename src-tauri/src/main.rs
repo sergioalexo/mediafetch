@@ -128,11 +128,47 @@ fn clear_app_log(app: AppHandle) {
     downloader::app_log_clear(&app);
 }
 
+/// Whether two requests would fetch the same thing the same way. Deliberately
+/// strict: a URL queued as audio and again as video is two real outputs, so
+/// only an identical request counts as a duplicate.
+fn same_request(a: &DownloadOptions, b: &DownloadOptions) -> bool {
+    a.url == b.url
+        && a.kind == b.kind
+        && a.engine == b.engine
+        && a.format == b.format
+        && a.audio_format == b.audio_format
+        && a.audio_quality == b.audio_quality
+        && a.playlist == b.playlist
+        && a.playlist_items == b.playlist_items
+}
+
+/// Queue the given items, skipping any already covered by a live task, and
+/// return how many were skipped. Two playlists routinely share a song; without
+/// this it gets fetched twice, and with `max_parallel > 1` the copies can run
+/// at once, so neither sees the other's finished file and they fight over the
+/// same `.part`. Checking inside the same lock also dedupes within `items`.
 #[tauri::command]
-fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) {
+fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) -> usize {
+    let mut skipped = 0usize;
     {
         let mut q = state.queue.lock().unwrap();
         for opts in items {
+            // Only a live task blocks a duplicate. A completed, failed or
+            // cancelled one stays in the queue until restart, and re-adding
+            // those is a deliberate re-download.
+            let duplicate = q.iter().any(|t| {
+                matches!(
+                    t.status,
+                    TaskStatus::Queued
+                        | TaskStatus::Downloading
+                        | TaskStatus::Postprocessing
+                        | TaskStatus::Paused
+                ) && same_request(&t.options, &opts)
+            });
+            if duplicate {
+                skipped += 1;
+                continue;
+            }
             q.push(DownloadTask {
                 id: uuid::Uuid::new_v4().to_string(),
                 url: opts.url.clone(),
@@ -160,6 +196,7 @@ fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) 
     }
     downloader::emit_queue(&app);
     downloader::pump(&app);
+    skipped
 }
 
 #[tauri::command]
@@ -620,4 +657,76 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running MediaFetch");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_request;
+    use crate::types::DownloadOptions;
+
+    fn opts(url: &str, kind: &str) -> DownloadOptions {
+        DownloadOptions {
+            url: url.into(),
+            kind: kind.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn same_url_and_kind_is_a_duplicate() {
+        assert!(same_request(
+            &opts("https://y.tld/watch?v=a", "audio"),
+            &opts("https://y.tld/watch?v=a", "audio")
+        ));
+    }
+
+    #[test]
+    fn audio_and_video_of_one_url_are_not_duplicates() {
+        assert!(!same_request(
+            &opts("https://y.tld/watch?v=a", "audio"),
+            &opts("https://y.tld/watch?v=a", "video")
+        ));
+    }
+
+    #[test]
+    fn different_urls_are_not_duplicates() {
+        assert!(!same_request(
+            &opts("https://y.tld/watch?v=a", "audio"),
+            &opts("https://y.tld/watch?v=b", "audio")
+        ));
+    }
+
+    #[test]
+    fn different_quality_of_one_url_is_not_a_duplicate() {
+        let mut a = opts("https://y.tld/watch?v=a", "audio");
+        let mut b = a.clone();
+        a.audio_quality = Some("320".into());
+        b.audio_quality = Some("128".into());
+        assert!(!same_request(&a, &b));
+    }
+
+    #[test]
+    fn different_slices_of_one_playlist_are_not_duplicates() {
+        let mut a = opts("https://y.tld/playlist?list=p", "audio");
+        a.playlist = true;
+        let mut b = a.clone();
+        a.playlist_items = Some("1-5".into());
+        b.playlist_items = Some("6-10".into());
+        assert!(!same_request(&a, &b));
+    }
+
+    #[test]
+    fn grouping_and_display_fields_do_not_affect_identity() {
+        // The same track reached through two playlists carries a different
+        // groupId and title, and must still register as a duplicate.
+        let mut a = opts("https://y.tld/watch?v=a", "audio");
+        let mut b = a.clone();
+        a.group_id = Some("g1".into());
+        a.group_title = Some("Playlist One".into());
+        a.title = Some("Track".into());
+        b.group_id = Some("g2".into());
+        b.group_title = Some("Playlist Two".into());
+        b.thumbnail = Some("https://img.tld/b.jpg".into());
+        assert!(same_request(&a, &b));
+    }
 }

@@ -412,6 +412,8 @@ const en = {
   // Store toasts
   "t.downloadComplete": "Download complete",
   "t.downloadFailed": "Download failed",
+  "t.duplicatesSkipped": "Already in the queue",
+  "t.nDuplicatesSkipped": "{n} skipped as duplicates",
 };
 
 export type MsgKey = keyof typeof en;
@@ -808,6 +810,8 @@ const uk: Record<MsgKey, string> = {
 
   "t.downloadComplete": "Завантаження завершено",
   "t.downloadFailed": "Помилка завантаження",
+  "t.duplicatesSkipped": "Вже у черзі",
+  "t.nDuplicatesSkipped": "Пропущено дублікатів: {n}",
 };
 
 const ru: Record<MsgKey, string> = {
@@ -1202,6 +1206,8 @@ const ru: Record<MsgKey, string> = {
 
   "t.downloadComplete": "Загрузка завершена",
   "t.downloadFailed": "Ошибка загрузки",
+  "t.duplicatesSkipped": "Уже в очереди",
+  "t.nDuplicatesSkipped": "Пропущено дубликатов: {n}",
 };
 
 const MESSAGES: Record<Lang, Record<MsgKey, string>> = { en, uk, ru };

@@ -48,10 +48,24 @@ export function formatDate(unixSecs: number): string {
 
 const URL_RE = /https?:\/\/[^\s"'<>\])]+/g;
 
-/** Extract every http(s) URL from arbitrary text (paste / drop payloads). */
+/**
+ * Extract every http(s) URL from arbitrary text (paste / drop payloads).
+ *
+ * Pasting a batch of links is the normal way to use the app, and they arrive
+ * however the source happened to separate them: newlines, spaces, commas, or
+ * loose in a sentence. Whitespace the regex handles on its own; the rest needs
+ * splitting on any separator that sits directly before the next link, and
+ * trimming the sentence punctuation that would otherwise ride along.
+ */
 export function extractUrls(text: string): string[] {
   const found = text.match(URL_RE) ?? [];
-  return [...new Set(found.map((u) => u.trim()))];
+  const urls = found
+    // Split only where another link actually begins, so a comma inside a URL
+    // (map coordinates, some CDN paths) is left alone.
+    .flatMap((run) => run.split(/[,;|]*(?=https?:\/\/)/g))
+    .map((u) => u.trim().replace(/[.,;:!?]+$/, ""))
+    .filter((u) => /^https?:\/\/\S+$/.test(u));
+  return [...new Set(urls)];
 }
 
 /** Human-friendly source host for a URL, e.g. "youtube.com" (no "www."). */

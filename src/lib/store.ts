@@ -83,6 +83,8 @@ interface AppState {
   setDraftEntriesAll: (id: string, selected: boolean) => void;
   toggleDraftCollapsed: (id: string) => void;
   removeDraft: (id: string) => void;
+  /** Queue items directly, reporting any the backend skipped as duplicates. */
+  enqueueItems: (items: DownloadOptions[]) => Promise<void>;
   downloadDraft: (id: string) => Promise<void>;
   downloadAllDrafts: () => Promise<void>;
   downloadNextDraft: () => Promise<void>;
@@ -166,7 +168,8 @@ export const useApp = create<AppState>((set, get) => ({
         addedAt: Date.now(),
       }));
     if (fresh.length === 0) return;
-    set((s) => ({ drafts: [...s.drafts, ...fresh] }));
+    // Newest links go on top so a fresh paste is always the first card.
+    set((s) => ({ drafts: [...fresh, ...s.drafts] }));
     for (const d of fresh) scheduleAnalyze(get, set, d.id);
   },
   setDraftPreset: (id, presetId) =>
@@ -205,12 +208,13 @@ export const useApp = create<AppState>((set, get) => ({
       drafts: s.drafts.map((d) => (d.id === id ? { ...d, collapsed: !d.collapsed } : d)),
     })),
   removeDraft: (id) => set((s) => ({ drafts: s.drafts.filter((d) => d.id !== id) })),
+  enqueueItems: (items) => enqueueReportingDuplicates(get, items),
   downloadDraft: async (id) => {
     const draft = get().drafts.find((d) => d.id === id);
     if (!draft || draft.status !== "ready" || !draft.result) return;
     const items = buildDraftItems(get, draft);
     if (items.length === 0) return;
-    await api.enqueue(items);
+    await enqueueReportingDuplicates(get, items);
     set((s) => ({ drafts: s.drafts.filter((d) => d.id !== id) }));
     get().setPage("downloads");
   },
@@ -218,7 +222,7 @@ export const useApp = create<AppState>((set, get) => ({
     const ready = get().drafts.filter((d) => d.status === "ready" && d.result);
     const items = ready.flatMap((d) => buildDraftItems(get, d));
     if (items.length === 0) return;
-    await api.enqueue(items);
+    await enqueueReportingDuplicates(get, items);
     const ids = new Set(ready.map((d) => d.id));
     set((s) => ({ drafts: s.drafts.filter((d) => !ids.has(d.id)) }));
   },
@@ -416,6 +420,22 @@ function pumpAnalyze(get: Get, set: SetState) {
       pumpAnalyze(get, set);
     });
   }
+}
+
+/**
+ * Enqueue, then say so when the backend dropped duplicates. Adding two
+ * playlists that share a song is the common way to hit this, and a silently
+ * shorter queue than the button promised is worse than a one-line toast.
+ */
+async function enqueueReportingDuplicates(get: Get, items: DownloadOptions[]) {
+  const skipped = await api.enqueue(items);
+  if (!skipped) return;
+  const lang = get().settings?.language ?? "en";
+  get().toast({
+    title: translate(lang, "t.duplicatesSkipped"),
+    description: translate(lang, "t.nDuplicatesSkipped", { n: skipped }),
+    variant: "default",
+  });
 }
 
 async function runAnalyze(get: Get, set: SetState, id: string) {

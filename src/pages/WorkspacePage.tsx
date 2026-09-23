@@ -101,7 +101,9 @@ export function WorkspacePage() {
     [drafts, presets, binaries]
   );
 
-  // Group live tasks by their playlist groupId, preserving first-seen order.
+  // Group live tasks by their playlist groupId (first-seen order), then flip the
+  // rows so the newest download sits at the top next to the drafts it came from.
+  // Tasks inside a group keep their playlist order -- see TaskGroup.
   const rendered = useMemo(() => {
     const seen = new Set<string>();
     const rows: { type: "single" | "group"; task?: DownloadTask; groupId?: string }[] = [];
@@ -115,6 +117,7 @@ export function WorkspacePage() {
         rows.push({ type: "single", task });
       }
     }
+    rows.reverse();
     return rows;
   }, [queue]);
 
@@ -442,7 +445,7 @@ function DraftCard({ draft }: { draft: Draft }) {
       },
       t
     );
-    void api.enqueue([opts]);
+    void useApp.getState().enqueueItems([opts]);
     removeDraft(draft.id);
   };
 

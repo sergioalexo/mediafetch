@@ -21,7 +21,7 @@ pub struct MetadataOverrides {
     pub genre: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadOptions {
     pub url: String,
