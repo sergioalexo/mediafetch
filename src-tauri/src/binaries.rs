@@ -738,7 +738,7 @@ fn extract_named(zip_path: &PathBuf, wanted: &str, dest: &PathBuf) -> Result<(),
 }
 
 #[cfg(windows)]
-fn extract_ffmpeg(zip_path: &PathBuf, dest_dir: &PathBuf) -> Result<(), String> {
+fn extract_ffmpeg(zip_path: &PathBuf, dest_dir: &std::path::Path) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     let wanted = ["ffmpeg.exe", "ffprobe.exe"];

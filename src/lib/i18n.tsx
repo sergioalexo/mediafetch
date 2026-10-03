@@ -123,7 +123,7 @@ const en = {
 
   // History page
   "h.title": "History",
-  "h.recorded": "Downloads recorded: {n}",
+  "h.recordedSplit": "{ok} downloaded · {failed} failed",
   "h.clearAll": "Clear all",
   "h.search": "Search downloads…",
   "h.failed": "failed",
@@ -136,6 +136,11 @@ const en = {
   "h.took": "in {t}",
   "h.copyUrl": "Copy source link",
   "h.urlCopied": "Link copied",
+  "h.filterAll": "All",
+  "h.filterDownloaded": "Downloaded",
+  "h.filterFailed": "Failed",
+  "h.retry": "Retry",
+  "h.retried": "Re-queued",
 
   // Stats page
   "s.title": "Statistics",
@@ -530,7 +535,7 @@ const uk: Record<MsgKey, string> = {
   "tip.audioOnly": "Завантажити лише аудіо",
 
   "h.title": "Історія",
-  "h.recorded": "Записано завантажень: {n}",
+  "h.recordedSplit": "{ok} завантажено · {failed} помилок",
   "h.clearAll": "Очистити все",
   "h.search": "Пошук завантажень…",
   "h.failed": "помилка",
@@ -543,6 +548,11 @@ const uk: Record<MsgKey, string> = {
   "h.took": "за {t}",
   "h.copyUrl": "Копіювати посилання",
   "h.urlCopied": "Посилання скопійовано",
+  "h.filterAll": "Усі",
+  "h.filterDownloaded": "Завантажено",
+  "h.filterFailed": "Помилки",
+  "h.retry": "Повторити",
+  "h.retried": "Додано в черзу",
 
   "s.title": "Статистика",
   "s.subtitle": "Статистика завантажень за весь час",
@@ -926,7 +936,7 @@ const ru: Record<MsgKey, string> = {
   "tip.audioOnly": "Скачать только аудио",
 
   "h.title": "История",
-  "h.recorded": "Записано загрузок: {n}",
+  "h.recordedSplit": "{ok} загружено · {failed} ошибок",
   "h.clearAll": "Очистить всё",
   "h.search": "Поиск загрузок…",
   "h.failed": "ошибка",
@@ -939,6 +949,11 @@ const ru: Record<MsgKey, string> = {
   "h.took": "за {t}",
   "h.copyUrl": "Копировать ссылку",
   "h.urlCopied": "Ссылка скопирована",
+  "h.filterAll": "Все",
+  "h.filterDownloaded": "Загружено",
+  "h.filterFailed": "Ошибки",
+  "h.retry": "Повторить",
+  "h.retried": "Добавлено в очередь",
 
   "s.title": "Статистика",
   "s.subtitle": "Статистика загрузок за всё время",

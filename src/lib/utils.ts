@@ -77,6 +77,60 @@ export function hostname(url: string): string {
   }
 }
 
+/**
+ * The video/track id a URL points at, for the services we know how to read
+ * one from, independent of which host or playlist context it was pasted
+ * from (`music.youtube.com/watch?v=X` vs `youtube.com/watch?v=X&list=…`).
+ */
+export function extractMediaId(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+
+  if (host === "youtube.com" || host === "music.youtube.com" || host.endsWith(".youtube.com")) {
+    const v = u.searchParams.get("v");
+    if (v) return v;
+    const m = u.pathname.match(/\/(?:shorts|embed|live)\/([^/?#]+)/);
+    if (m) return m[1];
+  }
+  if (host === "youtu.be") {
+    const m = u.pathname.match(/^\/([^/?#]+)/);
+    if (m) return m[1];
+  }
+  if (host === "soundcloud.com" || host.endsWith(".soundcloud.com")) {
+    // SoundCloud has no stable short id in the URL itself — the path
+    // (artist/track) *is* the identity, so normalizeUrl is what matches it.
+    return null;
+  }
+  return null;
+}
+
+/**
+ * A URL stripped down to the part that actually identifies the item: no
+ * query string, no fragment, no trailing slash, scheme/host lowercased.
+ * Lets a playlist link (`…&list=…`) and the bare track link match.
+ */
+export function normalizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "").replace(/^music\./, "");
+    const path = u.pathname.replace(/\/+$/, "");
+    // The id lives in the query string on some hosts (YouTube's "v="), and
+    // stripping the whole query would collapse every video on the same path
+    // into one key. Keep only that identifying param, drop the rest
+    // (playlist/list/index and tracking params carry no identity of their
+    // own).
+    const id = u.searchParams.get("v");
+    return id ? `${host}${path}?v=${id}` : `${host}${path}`;
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
 export function codecLabel(vcodec?: string | null): string {
   if (!vcodec || vcodec === "none") return "";
   const c = vcodec.toLowerCase();

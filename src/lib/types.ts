@@ -123,6 +123,8 @@ export interface DownloadTask {
   forceSingleConnection: boolean;
   /** Set by auto-retry after a 403/429: re-extract with yt-dlp's own player clients. */
   useDefaultPlayerClient: boolean;
+  /** Canonical "<extractor_key>:<id>", captured once yt-dlp finishes. */
+  mediaKey?: string | null;
   options: DownloadOptions;
 }
 
@@ -294,4 +296,8 @@ export interface HistoryEntry {
   elapsedSecs: number;
   avgSpeed: number; // bytes/sec
   status: "completed" | "failed";
+  /** Canonical "<extractor_key>:<id>", when yt-dlp reported one. */
+  mediaKey?: string | null;
+  /** "local" (this install downloaded it) | "imported" (merged from a backup). */
+  source?: "local" | "imported" | null;
 }

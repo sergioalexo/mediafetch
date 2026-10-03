@@ -163,6 +163,11 @@ pub fn clear_log(app: &AppHandle, id: &str) {
 /// instead, which does go through the encoding-aware writer.
 const PROGRESS_TEMPLATE: &str = "download:MFPROG|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.playlist_index)s|%(info.playlist_count)s";
 const PP_TEMPLATE: &str = "postprocess:MFPP";
+/// Printed once the final file is in place. This is the only reliable way to
+/// know a file was actually produced — yt-dlp can exit 0 having done nothing
+/// (an already-archived or unavailable item), and `[download] Destination:`
+/// lines fire per-fragment/per-format, not once per finished item.
+const DONE_TEMPLATE: &str = "after_move:MFDONE|%(extractor_key)s|%(id)s|%(filepath)s";
 
 pub fn emit_queue(app: &AppHandle) {
     let state = app.state::<AppState>();
@@ -191,6 +196,12 @@ fn task_status(app: &AppHandle, id: &str) -> Option<TaskStatus> {
     let state = app.state::<AppState>();
     let q = state.queue.lock().unwrap();
     q.iter().find(|t| t.id == id).map(|t| t.status)
+}
+
+fn current_task(app: &AppHandle, id: &str) -> Option<DownloadTask> {
+    let state = app.state::<AppState>();
+    let q = state.queue.lock().unwrap();
+    q.iter().find(|t| t.id == id).cloned()
 }
 
 #[cfg(windows)]
@@ -273,8 +284,10 @@ pub fn js_runtime_spec(app: &AppHandle) -> Option<String> {
 /// `--js-runtimes` is a recent flag and the Components page can roll yt-dlp
 /// back to a build that would reject it outright. Cached per binary (size +
 /// mtime), so an install or rollback re-checks by itself.
+type FileStamp = (u64, u64);
+
 fn ytdlp_supports_js_runtimes(app: &AppHandle) -> bool {
-    static CACHE: OnceLock<Mutex<Option<((u64, u64), bool)>>> = OnceLock::new();
+    static CACHE: OnceLock<Mutex<Option<(FileStamp, bool)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(None));
 
     let Ok(path) = binaries::ytdlp_path(app) else {
@@ -436,10 +449,16 @@ pub fn build_args(
         "--newline".into(),
         ENCODING_ARGS[0].into(),
         ENCODING_ARGS[1].into(),
+        // --print implies --quiet unless --no-quiet is passed; without this
+        // the MFDONE line would come through, but every normal progress and
+        // destination line this file also depends on would not.
+        "--no-quiet".into(),
         "--progress-template".into(),
         PROGRESS_TEMPLATE.into(),
         "--progress-template".into(),
         PP_TEMPLATE.into(),
+        "--print".into(),
+        DONE_TEMPLATE.into(),
     ]);
 
     // Sanitize titles into valid Windows filenames and cap the filename
@@ -849,8 +868,8 @@ async fn probe_abr(app: &AppHandle, url: &str, settings: &Settings) -> Option<f6
     let text = String::from_utf8_lossy(&output.stdout);
     let line = text.lines().find(|l| !l.trim().is_empty())?;
     let mut parts = line.trim().split('|');
-    let abr = parts.next().and_then(|f| parse_f64(f));
-    abr.or_else(|| parts.next().and_then(|f| parse_f64(f)))
+    let abr = parts.next().and_then(parse_f64);
+    abr.or_else(|| parts.next().and_then(parse_f64))
 }
 
 /// Filename without its extension, for use as a display title.
@@ -986,6 +1005,8 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     let already_re =
         regex::Regex::new(r#"^\[download\] (.+) has already been downloaded"#).unwrap();
 
+    let mut saw_mfdone = false;
+    let mut already_had = false;
     if gallery {
         run_gallery_stdout(&app, &mut child, &task).await;
     } else if let Some(stdout) = child.stdout.take() {
@@ -997,11 +1018,47 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
 
             // The two progress-template markers are internal bookkeeping,
             // not real yt-dlp output — everything else is worth logging.
-            if !line.is_empty() && !line.starts_with("MFPROG|") && !line.starts_with("MFPP") {
+            if !line.is_empty()
+                && !line.starts_with("MFPROG|")
+                && !line.starts_with("MFPP")
+                && !line.starts_with("MFDONE|")
+            {
                 push_log(&app, &task.id, line.to_string());
             }
 
-            if let Some(rest) = line.strip_prefix("MFPROG|") {
+            if line.contains("has already been recorded in the archive")
+                || line.contains("has already been downloaded")
+            {
+                already_had = true;
+            }
+
+            if let Some(rest) = line.strip_prefix("MFDONE|") {
+                let fields: Vec<&str> = rest.splitn(3, '|').collect();
+                if fields.len() == 3 {
+                    saw_mfdone = true;
+                    let extractor_key = fields[0].trim();
+                    let id = fields[1].trim();
+                    let path = fields[2].trim().to_string();
+                    let media_key = if !extractor_key.is_empty() && !id.is_empty() {
+                        Some(format!("{extractor_key}:{id}"))
+                    } else {
+                        None
+                    };
+                    updated = with_task(&app, &task.id, |t| {
+                        if t.options.title.is_none() {
+                            if let Some(stem) = file_stem(&path) {
+                                t.title = stem;
+                            }
+                        }
+                        if !path.is_empty() {
+                            t.filename = Some(path.clone());
+                        }
+                        if media_key.is_some() {
+                            t.media_key = media_key.clone();
+                        }
+                    });
+                }
+            } else if let Some(rest) = line.strip_prefix("MFPROG|") {
                 let fields: Vec<&str> = rest.splitn(7, '|').collect();
                 if fields.len() == 7 {
                     let downloaded = parse_f64(fields[0]).unwrap_or(0.0);
@@ -1089,8 +1146,18 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         return;
     }
 
-    let success = exit.map(|s| s.success()).unwrap_or(false);
-    if success {
+    let exit_ok = exit.map(|s| s.success()).unwrap_or(false);
+    // gallery-dl keeps its own per-file counting; a yt-dlp exit of 0 only
+    // means something was produced once MFDONE fired or the destination file
+    // actually exists — it can also exit 0 having done nothing at all (an
+    // already-archived or unavailable item).
+    let file_exists = current_task(&app, &task.id)
+        .and_then(|t| t.filename)
+        .map(|f| std::path::Path::new(&f).exists())
+        .unwrap_or(false);
+    let media_produced = gallery || saw_mfdone || file_exists;
+
+    if exit_ok && media_produced {
         let done = with_task(&app, &task.id, |t| {
             t.status = TaskStatus::Completed;
             t.progress = 100.0;
@@ -1101,14 +1168,28 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         if let Some(t) = done {
             finish_history(&app, &t, &settings, true).await;
         }
+    } else if exit_ok && !gallery && already_had {
+        // Nothing new was produced, but nothing failed either — don't add a
+        // second history entry for a track already in the archive.
+        with_task(&app, &task.id, |t| {
+            t.status = TaskStatus::Completed;
+            t.progress = 100.0;
+            t.speed = 0.0;
+            t.eta = 0.0;
+            t.completed_at = Some(now_unix());
+        });
     } else {
-        let raw_error = stderr_tail
-            .iter()
-            .rev()
-            .find(|l| l.contains("ERROR"))
-            .cloned()
-            .or_else(|| stderr_tail.back().cloned())
-            .unwrap_or_else(|| "yt-dlp exited with an error".into());
+        let raw_error = if exit_ok {
+            "yt-dlp finished without producing a file".to_string()
+        } else {
+            stderr_tail
+                .iter()
+                .rev()
+                .find(|l| l.contains("ERROR"))
+                .cloned()
+                .or_else(|| stderr_tail.back().cloned())
+                .unwrap_or_else(|| "yt-dlp exited with an error".into())
+        };
         let failure = classify_failure(&raw_error);
         let error = friendly_error(&raw_error, failure);
 
@@ -1371,6 +1452,8 @@ async fn finish_history(app: &AppHandle, task: &DownloadTask, settings: &Setting
             0.0
         },
         status: if ok { "completed".into() } else { "failed".into() },
+        media_key: task.media_key.clone(),
+        source: Some("local".into()),
     };
     history::add(app, entry.clone());
     let _ = app.emit("history-added", &entry);

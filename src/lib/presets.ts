@@ -12,6 +12,7 @@ import type {
   Preset,
 } from "./types";
 import type { MsgKey } from "./i18n";
+import { extractMediaId, normalizeUrl } from "./utils";
 
 export const AUDIO_FORMATS: { value: AudioFormat; label: string; hint: MsgKey }[] = [
   { value: "mp3", label: "MP3", hint: "dl.hintUniversal" },
@@ -99,17 +100,47 @@ export function audioFormatLabel(f: AudioFormat): string {
   return AUDIO_FORMATS.find((x) => x.value === f)?.label ?? f.toUpperCase();
 }
 
-/** True when a completed history entry matches this URL / media id. */
+/** O(1) lookup structure built once per history change, from completed entries only. */
+export interface DownloadedIndex {
+  keys: Set<string>;
+  urls: Set<string>;
+  ids: Set<string>;
+}
+
+/** Memoized per history array identity — rebuilding on every `isAlreadyDownloaded`
+ * call was O(history × entries) on every playlist analysis. */
+const downloadedIndexCache = new WeakMap<HistoryEntry[], DownloadedIndex>();
+
+export function buildDownloadedIndex(history: HistoryEntry[]): DownloadedIndex {
+  const cached = downloadedIndexCache.get(history);
+  if (cached) return cached;
+  const keys = new Set<string>();
+  const urls = new Set<string>();
+  const ids = new Set<string>();
+  for (const h of history) {
+    if (h.status !== "completed") continue;
+    if (h.mediaKey) keys.add(h.mediaKey);
+    urls.add(normalizeUrl(h.url));
+    const id = extractMediaId(h.url);
+    if (id) ids.add(id);
+  }
+  const index: DownloadedIndex = { keys, urls, ids };
+  downloadedIndexCache.set(history, index);
+  return index;
+}
+
+/** True when a completed history entry matches this URL / media id. Playlist
+ * entries carry `id` from analysis already — matched first. */
 export function isAlreadyDownloaded(
   history: HistoryEntry[],
   url: string,
   id?: string | null
 ): boolean {
-  return history.some(
-    (h) =>
-      h.status === "completed" &&
-      (h.url === url || (!!id && id.length >= 6 && h.url.includes(id)))
-  );
+  const index = buildDownloadedIndex(history);
+  if (id && index.ids.has(id)) return true;
+  const extracted = extractMediaId(url);
+  if (extracted && index.ids.has(extracted)) return true;
+  return index.urls.has(normalizeUrl(url));
 }
 
 interface BuildContext {

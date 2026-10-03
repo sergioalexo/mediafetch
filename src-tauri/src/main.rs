@@ -190,6 +190,7 @@ fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) 
                 retry_count: 0,
                 force_single_connection: false,
                 use_default_player_client: false,
+                media_key: None,
                 options: opts,
             });
         }

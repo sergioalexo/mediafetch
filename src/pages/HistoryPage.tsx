@@ -6,6 +6,7 @@ import {
   Globe,
   Music,
   Play,
+  RotateCcw,
   Search,
   Trash2,
   Video,
@@ -14,25 +15,40 @@ import {
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
 import * as api from "@/lib/api";
-import { formatBytes, formatDate, formatEta, formatSpeed, hostname } from "@/lib/utils";
+import { cn, formatBytes, formatDate, formatEta, formatSpeed, hostname } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
+type StatusFilter = "all" | "completed" | "failed";
+
 export function HistoryPage() {
   const history = useApp((s) => s.history);
   const toast = useApp((s) => s.toast);
+  const retryHistoryEntry = useApp((s) => s.retryHistoryEntry);
   const t = useT();
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+
+  const counts = useMemo(() => {
+    let completed = 0;
+    let failed = 0;
+    for (const h of history) {
+      if (h.status === "completed") completed++;
+      else if (h.status === "failed") failed++;
+    }
+    return { completed, failed };
+  }, [history]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return history;
-    return history.filter(
-      (h) => h.title.toLowerCase().includes(q) || h.url.toLowerCase().includes(q)
-    );
-  }, [history, query]);
+    return history.filter((h) => {
+      if (statusFilter !== "all" && h.status !== statusFilter) return false;
+      if (!q) return true;
+      return h.title.toLowerCase().includes(q) || h.url.toLowerCase().includes(q);
+    });
+  }, [history, query, statusFilter]);
 
   const refresh = async () => {
     const items = await api.getHistory();
@@ -45,7 +61,7 @@ export function HistoryPage() {
         <div>
           <h1 className="text-xl font-bold">{t("h.title")}</h1>
           <p className="text-sm text-muted-foreground">
-            {t("h.recorded", { n: history.length })}
+            {t("h.recordedSplit", { ok: counts.completed, failed: counts.failed })}
           </p>
         </div>
         {history.length > 0 && (
@@ -79,6 +95,25 @@ export function HistoryPage() {
             <X className="h-4 w-4" />
           </button>
         )}
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        {(["all", "completed", "failed"] as StatusFilter[]).map((f) => (
+          <button
+            key={f}
+            onClick={() => setStatusFilter(f)}
+            className={cn(
+              "rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors",
+              statusFilter === f
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-transparent text-muted-foreground hover:bg-accent"
+            )}
+          >
+            {f === "all" && t("h.filterAll")}
+            {f === "completed" && t("h.filterDownloaded")}
+            {f === "failed" && t("h.filterFailed")}
+          </button>
+        ))}
       </div>
 
       <div className="space-y-1.5">
@@ -119,6 +154,23 @@ export function HistoryPage() {
             </div>
             {h.status === "failed" && <Badge variant="destructive">{t("h.failed")}</Badge>}
             <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              {h.status === "failed" && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="iconSm"
+                      variant="ghost"
+                      onClick={async () => {
+                        await retryHistoryEntry(h);
+                        toast({ title: t("h.retried"), variant: "default" });
+                      }}
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("h.retry")}</TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button size="iconSm" variant="ghost" onClick={() => void api.openExternal(h.url)}>

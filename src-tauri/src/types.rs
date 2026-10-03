@@ -118,6 +118,10 @@ pub struct DownloadTask {
     /// ones, so this attempt gets URLs that haven't already been rejected.
     #[serde(default)]
     pub use_default_player_client: bool,
+    /// Canonical `"<extractor_key>:<id>"`, captured from yt-dlp's own
+    /// `after_move` print once the run finishes (see MFDONE in downloader.rs).
+    #[serde(default)]
+    pub media_key: Option<String>,
     pub options: DownloadOptions,
 }
 
@@ -135,6 +139,14 @@ pub struct HistoryEntry {
     pub elapsed_secs: u64,
     pub avg_speed: f64,
     pub status: String, // "completed" | "failed"
+    /// Canonical `"<extractor_key>:<id>"`, when yt-dlp reported one. Old
+    /// entries predate this and have none.
+    #[serde(default)]
+    pub media_key: Option<String>,
+    /// "local" (this install downloaded it) | "imported" (merged in from a
+    /// backup). Old entries predate this and default to "local" on read.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 pub fn now_unix() -> u64 {

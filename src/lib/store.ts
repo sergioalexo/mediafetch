@@ -85,6 +85,8 @@ interface AppState {
   removeDraft: (id: string) => void;
   /** Queue items directly, reporting any the backend skipped as duplicates. */
   enqueueItems: (items: DownloadOptions[]) => Promise<void>;
+  /** Re-enqueue a failed history entry's URL under its service's default preset. */
+  retryHistoryEntry: (h: HistoryEntry) => Promise<void>;
   downloadDraft: (id: string) => Promise<void>;
   downloadAllDrafts: () => Promise<void>;
   downloadNextDraft: () => Promise<void>;
@@ -209,6 +211,24 @@ export const useApp = create<AppState>((set, get) => ({
     })),
   removeDraft: (id) => set((s) => ({ drafts: s.drafts.filter((d) => d.id !== id) })),
   enqueueItems: (items) => enqueueReportingDuplicates(get, items),
+  retryHistoryEntry: async (h) => {
+    const s = get().settings;
+    const presetId = presetIdForUrl(
+      h.url,
+      s?.servicePresets ?? {},
+      s?.defaultPresetId ?? "",
+      (id) => !!s?.presets.some((p) => p.id === id)
+    );
+    const preset = s?.presets.find((p) => p.id === presetId) ?? s?.presets[0];
+    if (!preset) return;
+    const lang = s?.language ?? "en";
+    const options = optionsFromPreset(
+      preset,
+      { url: h.url, title: h.title },
+      (k) => translate(lang, k)
+    );
+    await enqueueReportingDuplicates(get, [options]);
+  },
   downloadDraft: async (id) => {
     const draft = get().drafts.find((d) => d.id === id);
     if (!draft || draft.status !== "ready" || !draft.result) return;
