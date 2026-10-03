@@ -1,5 +1,6 @@
-import { useMemo, useState, type ClipboardEvent, type DragEvent } from "react";
+import { memo, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AudioLines,
   ChevronDown,
@@ -28,7 +29,7 @@ import {
   presetSummary,
   sourceAbrOf,
 } from "@/lib/presets";
-import { cn, extractUrls, formatDuration, formatEta } from "@/lib/utils";
+import { cn, extractUrls, formatDuration, formatEta, groupRank, statusRank } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -64,6 +65,7 @@ export function WorkspacePage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [queueFilter, setQueueFilter] = useState("");
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
+  const [completedCollapsed, setCompletedCollapsed] = useState<boolean | null>(null);
 
   const activePresetId = settings?.defaultPresetId ?? "";
   const presets = settings?.presets ?? [];
@@ -101,9 +103,34 @@ export function WorkspacePage() {
     [drafts, presets, binaries]
   );
 
-  // Group live tasks by their playlist groupId (first-seen order), then flip the
-  // rows so the newest download sits at the top next to the drafts it came from.
-  // Tasks inside a group keep their playlist order -- see TaskGroup.
+  // Position in the backend order, by id — replaces O(n) `queue.indexOf` /
+  // `queue.findIndex` calls that used to run once per row, per render.
+  const idIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    queue.forEach((t, i) => m.set(t.id, i));
+    return m;
+  }, [queue]);
+
+  // Members of each playlist group, precomputed once per queue change —
+  // replaces the `queue.filter(... groupId ...)` that used to run for every
+  // group row, every render (TaskGroup, and the search filter below).
+  const groupsMap = useMemo(() => {
+    const m = new Map<string, DownloadTask[]>();
+    for (const t of queue) {
+      const gid = t.options.groupId;
+      if (!gid) continue;
+      const arr = m.get(gid);
+      if (arr) arr.push(t);
+      else m.set(gid, [t]);
+    }
+    return m;
+  }, [queue]);
+
+  // Group live tasks by their playlist groupId (first-seen order), newest
+  // download first, then sort for display only: active work at the top,
+  // finished work at the bottom (rendered.rank table). The backend queue
+  // order still decides what starts next — this never touches it. Tasks
+  // inside a group keep their playlist order -- see TaskGroup.
   const rendered = useMemo(() => {
     const seen = new Set<string>();
     const rows: { type: "single" | "group"; task?: DownloadTask; groupId?: string }[] = [];
@@ -118,8 +145,15 @@ export function WorkspacePage() {
       }
     }
     rows.reverse();
-    return rows;
-  }, [queue]);
+    const rank = (row: (typeof rows)[number]) =>
+      row.type === "single"
+        ? statusRank(row.task!.status)
+        : groupRank((groupsMap.get(row.groupId!) ?? []).map((t) => t.status));
+    return rows
+      .map((row, i) => ({ row, i, rank: rank(row) }))
+      .sort((a, b) => a.rank - b.rank || a.i - b.i)
+      .map((r) => r.row);
+  }, [queue, groupsMap]);
 
   const filteredRendered = useMemo(() => {
     const q = queueFilter.trim().toLowerCase();
@@ -128,12 +162,12 @@ export function WorkspacePage() {
       task.title.toLowerCase().includes(q) || task.url.toLowerCase().includes(q);
     return rendered.filter((row) => {
       if (row.type === "single") return matches(row.task!);
-      const groupTasks = queue.filter((t) => t.options.groupId === row.groupId);
+      const groupTasks = groupsMap.get(row.groupId!) ?? [];
       return groupTasks.some(matches) || (groupTasks[0]?.options.groupTitle ?? "")
         .toLowerCase()
         .includes(q);
     });
-  }, [rendered, queue, queueFilter]);
+  }, [rendered, groupsMap, queueFilter]);
 
   // Rough ETA across everything currently downloading — bytes remaining over
   // combined active speed. Queued-but-not-started tasks aren't included since
@@ -338,16 +372,29 @@ export function WorkspacePage() {
             </div>
           )}
 
-          <AnimatePresence initial={false}>
-            {filteredRendered.map((row) => {
+          {(() => {
+            const rowRank = (row: (typeof filteredRendered)[number]) =>
+              row.type === "single"
+                ? statusRank(row.task!.status)
+                : groupRank((groupsMap.get(row.groupId!) ?? []).map((t) => t.status));
+            const activeRows = filteredRendered.filter((r) => rowRank(r) < 4);
+            const doneRows = filteredRendered.filter((r) => rowRank(r) === 4);
+            const collapsed = completedCollapsed ?? doneRows.length > 20;
+
+            const renderRow = (row: (typeof filteredRendered)[number]) => {
               const dragId = reorderableId(row);
               return row.type === "group" ? (
-                <TaskGroup key={row.groupId} groupId={row.groupId!} />
+                <TaskGroup
+                  key={row.groupId}
+                  tasks={groupsMap.get(row.groupId!) ?? []}
+                  idIndex={idIndex}
+                  queueLength={queue.length}
+                />
               ) : (
                 <QueueItem
                   key={row.task!.id}
                   task={row.task!}
-                  index={queue.indexOf(row.task!)}
+                  index={idIndex.get(row.task!.id) ?? 0}
                   count={queue.length}
                   compact
                   dragProps={
@@ -359,10 +406,7 @@ export function WorkspacePage() {
                           onDrop: (e) => {
                             e.preventDefault();
                             if (dragTaskId && dragTaskId !== dragId) {
-                              void api.reorderTask(
-                                dragTaskId,
-                                queue.findIndex((t) => t.id === dragId)
-                              );
+                              void api.reorderTask(dragTaskId, idIndex.get(dragId) ?? 0);
                             }
                             setDragTaskId(null);
                           },
@@ -373,8 +417,30 @@ export function WorkspacePage() {
                   }
                 />
               );
-            })}
-          </AnimatePresence>
+            };
+
+            return (
+              <>
+                <AnimatePresence initial={false}>{activeRows.map(renderRow)}</AnimatePresence>
+                {doneRows.length > 0 && (
+                  <button
+                    onClick={() => setCompletedCollapsed(!collapsed)}
+                    className="flex w-full items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    {collapsed ? (
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
+                    {t("q.completedCount", { n: doneRows.length })}
+                  </button>
+                )}
+                {!collapsed && (
+                  <AnimatePresence initial={false}>{doneRows.map(renderRow)}</AnimatePresence>
+                )}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -418,10 +484,18 @@ function DraftCard({ draft }: { draft: Draft }) {
   const addUrls = useApp((s) => s.addUrls);
   const t = useT();
   const [previewOptions, setPreviewOptions] = useState<DownloadOptions | null>(null);
+  const entriesScrollRef = useRef<HTMLDivElement>(null);
 
   const presets = settings?.presets ?? [];
   const isPlaylist = draft.result?.kind === "playlist";
   const { oneTask } = draftPlan(useApp.getState, draft);
+  const entryCount = draft.result?.entries.length ?? 0;
+  const entriesVirtualizer = useVirtualizer({
+    count: entryCount,
+    getScrollElement: () => entriesScrollRef.current,
+    estimateSize: () => 28,
+    overscan: 8,
+  });
 
   const previewCommand = () => {
     const items = buildDraftItems(useApp.getState, draft);
@@ -639,30 +713,45 @@ function DraftCard({ draft }: { draft: Draft }) {
                   ? t("dl.deselectAll")
                   : t("dl.selectAll")}
               </button>
-              <div className="max-h-56 space-y-0.5 overflow-y-auto rounded-md border p-1.5">
-                {draft.result.entries.map((entry, i) => (
-                  <label
-                    key={entry.id + i}
-                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent"
-                  >
-                    <Checkbox
-                      checked={draft.selected.includes(i)}
-                      onCheckedChange={() => toggleEntry(draft.id, i)}
-                    />
-                    <span className="w-6 shrink-0 text-right text-muted-foreground">{i + 1}.</span>
-                    <span className="min-w-0 flex-1 truncate">{entry.title}</span>
-                    {isAlreadyDownloaded(history, entry.url, entry.id) && (
-                      <span className="shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-1 text-[10px] font-medium text-amber-500">
-                        {t("dl.downloadedBadge")}
-                      </span>
-                    )}
-                    {entry.duration ? (
-                      <span className="shrink-0 font-mono text-muted-foreground">
-                        {formatDuration(entry.duration)}
-                      </span>
-                    ) : null}
-                  </label>
-                ))}
+              <div ref={entriesScrollRef} className="max-h-56 overflow-y-auto rounded-md border p-1.5">
+                <div
+                  style={{
+                    height: entriesVirtualizer.getTotalSize(),
+                    position: "relative",
+                    width: "100%",
+                  }}
+                >
+                  {entriesVirtualizer.getVirtualItems().map((row) => {
+                    const entry = draft.result!.entries[row.index];
+                    const i = row.index;
+                    return (
+                      <label
+                        key={entry.id + i}
+                        className="absolute left-0 top-0 flex w-full cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent"
+                        style={{ height: row.size, transform: `translateY(${row.start}px)` }}
+                      >
+                        <Checkbox
+                          checked={draft.selected.includes(i)}
+                          onCheckedChange={() => toggleEntry(draft.id, i)}
+                        />
+                        <span className="w-6 shrink-0 text-right text-muted-foreground">
+                          {i + 1}.
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">{entry.title}</span>
+                        {isAlreadyDownloaded(history, entry.url, entry.id) && (
+                          <span className="shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-1 text-[10px] font-medium text-amber-500">
+                            {t("dl.downloadedBadge")}
+                          </span>
+                        )}
+                        {entry.duration ? (
+                          <span className="shrink-0 font-mono text-muted-foreground">
+                            {formatDuration(entry.duration)}
+                          </span>
+                        ) : null}
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
@@ -675,11 +764,17 @@ function DraftCard({ draft }: { draft: Draft }) {
 }
 
 /** A collapsible header for downloaded/queued tasks that share a playlist. */
-function TaskGroup({ groupId }: { groupId: string }) {
-  const queue = useApp((s) => s.queue);
+const TaskGroup = memo(function TaskGroup({
+  tasks,
+  idIndex,
+  queueLength,
+}: {
+  tasks: DownloadTask[];
+  idIndex: Map<string, number>;
+  queueLength: number;
+}) {
   const t = useT();
   const [collapsed, setCollapsed] = useState(false);
-  const tasks = queue.filter((t) => t.options.groupId === groupId);
   if (tasks.length === 0) return null;
   const done = tasks.filter((t) => t.status === "completed").length;
   const failed = tasks.filter((t) => t.status === "failed").length;
@@ -709,8 +804,8 @@ function TaskGroup({ groupId }: { groupId: string }) {
             <QueueItem
               key={task.id}
               task={task}
-              index={queue.indexOf(task)}
-              count={queue.length}
+              index={idIndex.get(task.id) ?? 0}
+              count={queueLength}
               compact
             />
           ))}
@@ -718,4 +813,4 @@ function TaskGroup({ groupId }: { groupId: string }) {
       )}
     </div>
   );
-}
+});

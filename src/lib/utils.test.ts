@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { extractMediaId, normalizeUrl } from "./utils";
+import { extractMediaId, groupRank, normalizeUrl, sortByStatusRank, statusRank } from "./utils";
+import type { TaskStatus } from "./types";
 
 describe("extractMediaId", () => {
   it("reads the YouTube video id from v=", () => {
@@ -50,5 +51,45 @@ describe("normalizeUrl", () => {
 
   it("falls back to a trimmed lowercase string for a malformed URL", () => {
     expect(normalizeUrl(" Not A URL ")).toBe("not a url");
+  });
+});
+
+describe("sortByStatusRank", () => {
+  function item(status: TaskStatus, tag: string) {
+    return { status, tag };
+  }
+
+  it("puts active work first and completed work last", () => {
+    const items = [
+      item("completed", "a"),
+      item("queued", "b"),
+      item("downloading", "c"),
+      item("failed", "d"),
+      item("paused", "e"),
+    ];
+    expect(sortByStatusRank(items).map((i) => i.tag)).toEqual(["c", "b", "e", "d", "a"]);
+  });
+
+  it("keeps the original relative order within a rank (stable sort)", () => {
+    const items = [item("queued", "a"), item("queued", "b"), item("queued", "c")];
+    expect(sortByStatusRank(items).map((i) => i.tag)).toEqual(["a", "b", "c"]);
+  });
+
+  it("ranks postprocessing the same as downloading", () => {
+    expect(statusRank("postprocessing")).toBe(statusRank("downloading"));
+  });
+
+  it("ranks cancelled the same as failed", () => {
+    expect(statusRank("cancelled")).toBe(statusRank("failed"));
+  });
+});
+
+describe("groupRank", () => {
+  it("takes the best (lowest) rank among the group's members", () => {
+    expect(groupRank(["completed", "completed", "downloading"])).toBe(statusRank("downloading"));
+  });
+
+  it("is the completed rank when every member is completed", () => {
+    expect(groupRank(["completed", "completed"])).toBe(statusRank("completed"));
   });
 });

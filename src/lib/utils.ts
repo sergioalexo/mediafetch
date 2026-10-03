@@ -1,8 +1,42 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { TaskStatus } from "./types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/**
+ * Display order only — the backend queue order still decides what starts
+ * next. Active work floats to the top, finished work sinks to the bottom.
+ */
+const STATUS_RANK: Record<TaskStatus, number> = {
+  downloading: 0,
+  postprocessing: 0,
+  queued: 1,
+  paused: 2,
+  failed: 3,
+  cancelled: 3,
+  completed: 4,
+};
+
+export function statusRank(status: TaskStatus): number {
+  return STATUS_RANK[status];
+}
+
+/**
+ * Stable sort of anything with a status by display rank — active first,
+ * then queued, paused, failed/cancelled, completed last. Ties keep their
+ * original relative order (`Array.prototype.sort` is stable in every engine
+ * this app ships on).
+ */
+export function sortByStatusRank<T extends { status: TaskStatus }>(items: T[]): T[] {
+  return [...items].sort((a, b) => statusRank(a.status) - statusRank(b.status));
+}
+
+/** The rank of a group of tasks is its most-active member's rank. */
+export function groupRank(statuses: TaskStatus[]): number {
+  return statuses.reduce((best, s) => Math.min(best, statusRank(s)), 4);
 }
 
 export function formatBytes(bytes: number, decimals = 1): string {

@@ -169,10 +169,65 @@ const PP_TEMPLATE: &str = "postprocess:MFPP";
 /// lines fire per-fragment/per-format, not once per finished item.
 const DONE_TEMPLATE: &str = "after_move:MFDONE|%(extractor_key)s|%(id)s|%(filepath)s";
 
-pub fn emit_queue(app: &AppHandle) {
+/// Minimum gap between two `queue-changed` emissions. Enqueueing 300 items or
+/// clearing a long finished list used to fire one full-queue snapshot per
+/// mutation; this coalesces a burst into at most one emit per window.
+const QUEUE_EMIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+
+struct QueueEmitState {
+    last: std::time::Instant,
+    pending: bool,
+}
+
+fn queue_emit_state() -> &'static Mutex<QueueEmitState> {
+    static STATE: OnceLock<Mutex<QueueEmitState>> = OnceLock::new();
+    STATE.get_or_init(|| {
+        Mutex::new(QueueEmitState {
+            last: std::time::Instant::now() - QUEUE_EMIT_INTERVAL,
+            pending: false,
+        })
+    })
+}
+
+fn emit_queue_now(app: &AppHandle) {
     let state = app.state::<AppState>();
     let snapshot = state.queue.lock().unwrap().clone();
     let _ = app.emit("queue-changed", &snapshot);
+}
+
+/// Debounced `queue-changed`: emits immediately if the last emit was more
+/// than `QUEUE_EMIT_INTERVAL` ago, otherwise schedules exactly one trailing
+/// emit for the end of the window (further calls inside the same window are
+/// no-ops — the trailing emit always reflects the latest queue state).
+pub fn emit_queue(app: &AppHandle) {
+    let wait = {
+        let mut s = queue_emit_state().lock().unwrap();
+        let elapsed = s.last.elapsed();
+        if elapsed >= QUEUE_EMIT_INTERVAL {
+            s.last = std::time::Instant::now();
+            None
+        } else if s.pending {
+            return;
+        } else {
+            s.pending = true;
+            Some(QUEUE_EMIT_INTERVAL - elapsed)
+        }
+    };
+    match wait {
+        None => emit_queue_now(app),
+        Some(wait) => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(wait).await;
+                {
+                    let mut s = queue_emit_state().lock().unwrap();
+                    s.last = std::time::Instant::now();
+                    s.pending = false;
+                }
+                emit_queue_now(&app);
+            });
+        }
+    }
 }
 
 /// After an import merges entries in on the Rust side, tell the frontend to

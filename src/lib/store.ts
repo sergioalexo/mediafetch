@@ -34,6 +34,10 @@ const LOG_LIMIT = 5000;
 const logBuffer: AppLogLine[] = [];
 let logFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Incoming task-progress events are batched the same way (see "task-progress").
+const progressBuffer = new Map<string, DownloadTask>();
+let progressFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
 /** A pasted link staged in the Workspace: analyzed but not yet downloading. */
 export interface Draft {
   id: string;
@@ -318,10 +322,22 @@ export const useApp = create<AppState>((set, get) => ({
       set({ queue: e.payload });
     });
 
+    // Buffered the same way app-log is: a 300-item queue downloading several
+    // tasks at once emits task-progress several times a second per task, and
+    // applying each one with its own `queue.map` re-rendered the whole
+    // Workspace page that many times.
     await listen<DownloadTask>("task-progress", (e) => {
-      set((s) => ({
-        queue: s.queue.map((t) => (t.id === e.payload.id ? e.payload : t)),
-      }));
+      progressBuffer.set(e.payload.id, e.payload);
+      if (progressFlushTimer === null) {
+        progressFlushTimer = setTimeout(() => {
+          progressFlushTimer = null;
+          const updates = new Map(progressBuffer);
+          progressBuffer.clear();
+          set((s) => ({
+            queue: s.queue.map((t) => updates.get(t.id) ?? t),
+          }));
+        }, 100);
+      }
     });
 
     await listen<HistoryEntry>("history-added", (e) => {
@@ -382,10 +398,13 @@ export const useApp = create<AppState>((set, get) => ({
     });
 
     // Aggregate speed sampling for the live graph (keep last 120 samples ≈ 2 min).
+    // Skipped entirely while nothing is downloading — an idle queue of 300
+    // finished items has no business re-rendering every subscriber once a
+    // second just to append a zero.
     setInterval(() => {
-      const speed = get()
-        .queue.filter((t) => t.status === "downloading")
-        .reduce((sum, t) => sum + (t.speed || 0), 0);
+      const active = get().queue.filter((t) => t.status === "downloading");
+      if (active.length === 0) return;
+      const speed = active.reduce((sum, t) => sum + (t.speed || 0), 0);
       set((s) => ({
         speedSamples: [...s.speedSamples, { t: Date.now(), speed }].slice(-120),
       }));

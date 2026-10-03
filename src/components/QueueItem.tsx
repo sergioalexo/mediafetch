@@ -1,5 +1,4 @@
-import { useState, type DragEvent, type ReactNode } from "react";
-import { motion } from "framer-motion";
+import { memo, useState, type DragEvent, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -74,7 +73,7 @@ function IconButton({
   );
 }
 
-export function QueueItem({
+export const QueueItem = memo(function QueueItem({
   task,
   index,
   count,
@@ -102,19 +101,18 @@ export function QueueItem({
     task.status === "completed" || task.status === "failed" || task.status === "cancelled";
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.97 }}
-      transition={{ type: "spring", stiffness: 500, damping: 40 }}
+    <div
+      // A cheap CSS fade-in instead of a Framer Motion layout animation —
+      // the previous version ran a spring on every one of 300 rows on every
+      // reorder/status change. Framer Motion stays for page transitions and
+      // dialogs, where there's one of them, not hundreds.
       draggable={dragProps?.draggable}
       onDragStart={dragProps?.onDragStart}
       onDragOver={dragProps?.onDragOver}
       onDrop={dragProps?.onDrop}
       onDragEnd={dragProps?.onDragEnd}
       className={cn(
-        "rounded-xl border bg-card shadow-sm",
+        "queue-row-in rounded-xl border bg-card shadow-sm",
         compact ? "p-2" : "p-3",
         active && "border-primary/30",
         dragProps?.dragging && "opacity-50"
@@ -234,26 +232,39 @@ export function QueueItem({
             </div>
           </div>
 
-          {(active || task.status === "paused") && (
+          {task.status === "postprocessing" ? (
             <div className="mt-2">
               <Progress
-                value={task.progress}
-                className={cn("h-1.5", task.status === "paused" && "opacity-50")}
+                value={100}
+                className="h-1.5"
+                indicatorClassName="animate-pulse opacity-60"
               />
-              <div className="mt-1.5 flex items-center justify-between font-mono text-[11px] text-muted-foreground">
-                <span>
-                  {formatBytes(task.downloadedBytes)}
-                  {task.totalBytes > 0 && ` / ${formatBytes(task.totalBytes)}`}
-                  {"  ·  "}
-                  {task.progress.toFixed(1)}%
-                </span>
-                {task.status === "downloading" && (
-                  <span>
-                    {formatSpeed(task.speed)} · ETA {formatEta(task.eta)}
-                  </span>
-                )}
+              <div className="mt-1.5 font-mono text-[11px] text-muted-foreground">
+                {t("q.converting")}
               </div>
             </div>
+          ) : (
+            (active || task.status === "paused") && (
+              <div className="mt-2">
+                <Progress
+                  value={task.progress}
+                  className={cn("h-1.5", task.status === "paused" && "opacity-50")}
+                />
+                <div className="mt-1.5 flex items-center justify-between font-mono text-[11px] text-muted-foreground">
+                  <span>
+                    {formatBytes(task.downloadedBytes)}
+                    {task.totalBytes > 0 && ` / ${formatBytes(task.totalBytes)}`}
+                    {"  ·  "}
+                    {task.progress.toFixed(1)}%
+                  </span>
+                  {task.status === "downloading" && (
+                    <span>
+                      {formatSpeed(task.speed)} · ETA {formatEta(task.eta)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
           )}
 
           {task.status === "failed" && task.error && (
@@ -278,6 +289,6 @@ export function QueueItem({
         title={task.title || task.url}
         onClose={() => setShowLog(false)}
       />
-    </motion.div>
+    </div>
   );
-}
+});
