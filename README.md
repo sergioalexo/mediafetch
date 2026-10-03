@@ -41,6 +41,9 @@ This software is provided "as is", without warranty of any kind, express or impl
 
 **Audio**
 - Extract audio to MP3, FLAC, WAV, AAC or OPUS at best available quality
+- MP3 320 kbps default for YouTube Music and SoundCloud links
+- Configurable sample rate (48 kHz default, 44.1 kHz, 96 kHz, or Original), globally or per preset
+- A one-line hint to convert a Spotify / Apple Music / Tidal / Deezer playlist to YouTube Music via Tune My Music, since those links can't be fetched directly
 
 **Photos & videos (social media)**
 - Built-in "Photos & videos" preset that downloads pictures as well as video, via **gallery-dl**
@@ -61,18 +64,25 @@ This software is provided "as is", without warranty of any kind, express or impl
 **Queue**
 - Pause / resume / retry / cancel / reorder
 - Configurable parallel downloads (1–8)
+- Display order: active downloads at the top, queued/paused/failed below, completed last (collapsible past 20)
+- Smooth with large playlists — the queue, history and playlist checklists virtualize past a few dozen rows
+
+**History**
+- Search, and filter by All / Downloaded / Failed, with a one-click Retry on failed entries
+- Correctness: success is only recorded once a file is actually produced; a failed-then-retried download leaves one completed entry, not a leftover failure
+- Back up and import history as a file — merges in, never replaces, so restoring a backup never loses what's already there
 
 **Extras**
-- Download history with search
 - Statistics with live speed graph and ETA
 - Native desktop notifications
-- Dark / light theme
+- Dark / light / auto theme, or a custom theme — create your own with a live-preview color editor, import/export as JSON, or pick one from the community gallery
+- First-run setup walks through installing components and picking defaults
 
 **Components** (`src-tauri/src/binaries.rs` + Components page)
-- Self-managed yt-dlp, FFmpeg and gallery-dl components
-- Links to the official upstream GitHub repositories ([yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp), [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), [mikf/gallery-dl](https://github.com/mikf/gallery-dl) via its [standalone builds](https://github.com/gdl-org/builds))
+- Self-managed yt-dlp, FFmpeg, Deno and gallery-dl components
+- Links to the official upstream GitHub repositories ([yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp), [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), [mikf/gallery-dl](https://github.com/mikf/gallery-dl) via its [standalone builds](https://github.com/gdl-org/builds), [denoland/deno](https://github.com/denoland/deno))
 - Installed version detection and latest-release checking
-- One-click installation and updates
+- One-click installation and updates, with an optional auto-update-on-startup for every managed component
 
 ## Development
 
