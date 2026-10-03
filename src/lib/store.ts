@@ -465,6 +465,18 @@ export const useApp = create<AppState>((set, get) => ({
       }
     });
 
+    // Fired once the background startup update pass finishes (auto_update_
+    // components), naming whichever components it actually updated.
+    await listen<string[]>("components-updated", (e) => {
+      void get().refreshBinaries(false);
+      const lang = get().settings?.language ?? "en";
+      get().toast({
+        title: translate(lang, "c.componentsUpdated"),
+        description: e.payload.join(", "),
+        variant: "default",
+      });
+    });
+
     // Aggregate speed sampling for the live graph (keep last 120 samples ≈ 2 min).
     // Skipped entirely while nothing is downloading — an idle queue of 300
     // finished items has no business re-rendering every subscriber once a

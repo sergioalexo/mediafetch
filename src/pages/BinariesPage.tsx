@@ -549,12 +549,12 @@ export function BinariesPage() {
         <Card>
           <CardContent className="flex items-center justify-between gap-6 p-4">
             <div className="min-w-0">
-              <div className="text-sm font-medium">{t("c.autoUpdateYtdlp")}</div>
-              <div className="text-xs text-muted-foreground">{t("c.autoUpdateYtdlpHint")}</div>
+              <div className="text-sm font-medium">{t("c.autoUpdateComponents")}</div>
+              <div className="text-xs text-muted-foreground">{t("c.autoUpdateComponentsHint")}</div>
             </div>
             <Switch
-              checked={settings.autoUpdateYtdlp}
-              onCheckedChange={(v) => void updateSettings({ autoUpdateYtdlp: v })}
+              checked={settings.autoUpdateComponents}
+              onCheckedChange={(v) => void updateSettings({ autoUpdateComponents: v })}
             />
           </CardContent>
         </Card>

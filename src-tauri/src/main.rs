@@ -13,7 +13,7 @@ mod types;
 
 use downloader::AppState;
 use settings::Settings;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use types::{now_unix, DownloadOptions, DownloadTask, HistoryEntry, TaskStatus};
 
@@ -592,7 +592,7 @@ fn main() {
             let handle = app.handle().clone();
             notify::register_app_identity(&handle);
             let loaded = settings::load(&handle);
-            let auto_update = loaded.auto_update_ytdlp;
+            let auto_update = loaded.auto_update_components;
             app.manage(AppState::new(loaded));
 
             // Open the log book with the versions any bug report needs — and
@@ -619,14 +619,17 @@ fn main() {
             if auto_update {
                 let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    // Only touch a copy we manage ourselves — never overwrite
-                    // a system-installed yt-dlp the user put on their PATH.
+                    // Only touch copies we manage ourselves — never overwrite
+                    // a system-installed binary the user put on their PATH.
                     let statuses = binaries::get_status(&handle, true).await;
-                    if let Some(s) = statuses
-                        .iter()
-                        .find(|s| s.name == binaries::YTDLP && s.managed && s.update_available)
-                    {
-                        let _ = binaries::install(&handle, &s.name, None).await;
+                    let mut updated = Vec::new();
+                    for s in statuses.iter().filter(|s| s.managed && s.update_available) {
+                        if binaries::install(&handle, &s.name, None).await.is_ok() {
+                            updated.push(s.name.clone());
+                        }
+                    }
+                    if !updated.is_empty() {
+                        let _ = handle.emit("components-updated", &updated);
                     }
                 });
             }

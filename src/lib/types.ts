@@ -166,7 +166,10 @@ export interface Settings {
   /** yt-dlp --impersonate target, e.g. "chrome"; empty = off. */
   impersonate: string;
   /** Check for and install a newer yt-dlp automatically on startup. */
+  /** Legacy yt-dlp-only flag; kept readable for migration only. */
   autoUpdateYtdlp: boolean;
+  /** Auto-update every managed component (yt-dlp, FFmpeg, Deno, gallery-dl). */
+  autoUpdateComponents: boolean;
   /** ASCII-only filenames (yt-dlp --restrict-filenames) — workaround for Unicode/Windows errors. */
   restrictFilenames: boolean;
   /** Auto re-queue a failed download this many times before leaving it Failed. 0 disables. */

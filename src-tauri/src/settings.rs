@@ -55,6 +55,7 @@ const SOCIAL_MEDIA_MIGRATION: &str = "social-media-preset";
 const AUTO_THEME_MIGRATION: &str = "auto-theme";
 const MUSIC_320_MIGRATION: &str = "music-320-defaults";
 const ONBOARDING_MIGRATION: &str = "onboarding-skip-existing";
+const AUTO_UPDATE_COMPONENTS_MIGRATION: &str = "auto-update-components";
 
 /// Photos *and* videos, exactly as the site stores them. The "media" quality
 /// preset resolves to a single progressive file, which is the only thing an
@@ -175,8 +176,12 @@ pub struct Settings {
     pub sleep_requests: f64,
     /// yt-dlp --impersonate target, e.g. "chrome"; empty = off.
     pub impersonate: String,
-    /// Check for and install a newer yt-dlp automatically on startup.
+    /// Legacy yt-dlp-only auto-update flag, kept readable so an existing
+    /// install's choice can be migrated into `auto_update_components`.
     pub auto_update_ytdlp: bool,
+    /// Check for and install newer releases of every *managed* component
+    /// (yt-dlp, FFmpeg, Deno, gallery-dl) automatically on startup.
+    pub auto_update_components: bool,
     /// yt-dlp --restrict-filenames: ASCII-only filenames. Workaround for
     /// Windows/Unicode filesystem errors on some setups; strips accents
     /// instead of preserving them, so it's opt-in.
@@ -228,6 +233,7 @@ impl Default for Settings {
             sleep_requests: 0.0,
             impersonate: String::new(),
             auto_update_ytdlp: false,
+            auto_update_components: true,
             restrict_filenames: false,
             auto_retry_limit: 2,
             theme: "auto".into(),
@@ -249,6 +255,13 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub fn load(app: &AppHandle) -> Settings {
+    // Needed before the fallback below kicks in, to tell "a settings file
+    // that already existed" apart from "a brand-new install" for the
+    // auto-update-components migration.
+    let file_existed = settings_path(app)
+        .ok()
+        .map(|p| p.exists())
+        .unwrap_or(false);
     let mut settings: Settings = settings_path(app)
         .ok()
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -320,6 +333,16 @@ pub fn load(app: &AppHandle) -> Settings {
         settings.migrations.push(ONBOARDING_MIGRATION.into());
         if settings.disclaimer_accepted {
             settings.onboarding_completed = true;
+        }
+        let _ = save(app, &settings);
+    }
+    // Generalizes the yt-dlp-only toggle to every managed component. An
+    // existing install's explicit choice carries over; a brand-new one gets
+    // the new default (true) rather than the old field's default (false).
+    if !settings.migrations.iter().any(|m| m == AUTO_UPDATE_COMPONENTS_MIGRATION) {
+        settings.migrations.push(AUTO_UPDATE_COMPONENTS_MIGRATION.into());
+        if file_existed {
+            settings.auto_update_components = settings.auto_update_ytdlp;
         }
         let _ = save(app, &settings);
     }
