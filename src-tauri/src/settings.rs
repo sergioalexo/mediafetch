@@ -54,6 +54,7 @@ pub const MUSIC_320_PRESET_ID: &str = "audio-mp3-320";
 const SOCIAL_MEDIA_MIGRATION: &str = "social-media-preset";
 const AUTO_THEME_MIGRATION: &str = "auto-theme";
 const MUSIC_320_MIGRATION: &str = "music-320-defaults";
+const ONBOARDING_MIGRATION: &str = "onboarding-skip-existing";
 
 /// Photos *and* videos, exactly as the site stores them. The "media" quality
 /// preset resolves to a single progressive file, which is the only thing an
@@ -195,6 +196,9 @@ pub struct Settings {
     // The user confirmed the legal disclaimer on first launch.
     pub disclaimer_accepted: bool,
     pub language: String, // "en" | "uk" | "ru"
+    /// The first-run onboarding flow has been finished (or explicitly reset
+    /// from Settings → About to run again).
+    pub onboarding_completed: bool,
 }
 
 impl Default for Settings {
@@ -232,6 +236,7 @@ impl Default for Settings {
             service_presets: std::collections::HashMap::new(),
             migrations: Vec::new(),
             disclaimer_accepted: false,
+            onboarding_completed: false,
             language: "en".into(),
         }
     }
@@ -305,6 +310,17 @@ pub fn load(app: &AppHandle) -> Settings {
             .service_presets
             .entry("soundcloud".into())
             .or_insert_with(|| MUSIC_320_PRESET_ID.into());
+        let _ = save(app, &settings);
+    }
+    // The onboarding flow is new; an install that already accepted the
+    // disclaimer clearly isn't a first run, so it's marked done rather than
+    // interrupting an existing user. A fresh profile has disclaimer_accepted
+    // still false here and runs onboarding normally.
+    if !settings.migrations.iter().any(|m| m == ONBOARDING_MIGRATION) {
+        settings.migrations.push(ONBOARDING_MIGRATION.into());
+        if settings.disclaimer_accepted {
+            settings.onboarding_completed = true;
+        }
         let _ = save(app, &settings);
     }
     settings

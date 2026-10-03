@@ -182,6 +182,8 @@ export interface Settings {
   /** The user confirmed the legal disclaimer on first launch. */
   disclaimerAccepted: boolean;
   language: "en" | "uk" | "ru";
+  /** The first-run onboarding flow has been finished (or reset to run again). */
+  onboardingCompleted: boolean;
 }
 
 // ---- Cookie diagnostics ----

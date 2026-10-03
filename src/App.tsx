@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/Sidebar";
 import { Toaster } from "@/components/Toaster";
 import { DisclaimerDialog } from "@/components/DisclaimerDialog";
+import { OnboardingDialog } from "@/components/OnboardingDialog";
 import { useApp } from "@/lib/store";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import { HistoryPage } from "@/pages/HistoryPage";
@@ -51,6 +52,7 @@ export default function App() {
       </div>
       <Toaster />
       <DisclaimerDialog />
+      <OnboardingDialog />
     </TooltipProvider>
   );
 }

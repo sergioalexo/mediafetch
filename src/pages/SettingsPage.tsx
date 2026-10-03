@@ -20,6 +20,7 @@ import {
   Moon,
   Pencil,
   Plus,
+  RefreshCcw,
   ScrollText,
   Shield,
   ShieldAlert,
@@ -766,6 +767,15 @@ export function SettingsPage() {
             <span className="font-mono text-xs text-muted-foreground">
               {appUpdate?.currentVersion ? `v${appUpdate.currentVersion}` : "—"}
             </span>
+          </Row>
+          <Row label={t("set.runSetup")} hint={t("set.runSetupHint")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => set({ onboardingCompleted: false })}
+            >
+              <RefreshCcw className="h-3.5 w-3.5" /> {t("set.runSetupBtn")}
+            </Button>
           </Row>
         </CardContent>
       </Card>

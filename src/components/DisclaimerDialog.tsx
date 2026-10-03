@@ -23,7 +23,12 @@ export function DisclaimerDialog() {
   const t = useT();
 
   const accepted = settings?.disclaimerAccepted ?? true; // don't flash before settings load
-  const open = !accepted || showDisclaimer;
+  // Onboarding has its own disclaimer step; while it's still running (not
+  // skipped or finished), this blocking modal would stack right on top of
+  // it. It only takes over once onboarding is done and acceptance still
+  // didn't happen — the fallback the plan calls for.
+  const onboardingPending = !!settings && !settings.onboardingCompleted;
+  const open = (!accepted && !onboardingPending) || showDisclaimer;
 
   const accept = () => {
     void updateSettings({ disclaimerAccepted: true });
