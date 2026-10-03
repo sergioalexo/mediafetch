@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
-import type { AudioFormat, AudioQuality, DownloadKind, Preset } from "@/lib/types";
+import type { AudioFormat, AudioQuality, DownloadKind, Preset, SampleRate } from "@/lib/types";
 import { presetAudioQuality } from "@/lib/presets";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
@@ -39,6 +39,7 @@ export function PresetDialog({
   const [videoPreset, setVideoPreset] = useState("best");
   const [audioFormat, setAudioFormat] = useState<AudioFormat>("mp3");
   const [audioQuality, setAudioQuality] = useState<AudioQuality>("match");
+  const [sampleRate, setSampleRate] = useState<SampleRate | null>(null);
   const [subLangs, setSubLangs] = useState("");
   const [fetchAll, setFetchAll] = useState(false);
   const [useGallery, setUseGallery] = useState(false);
@@ -52,6 +53,7 @@ export function PresetDialog({
     setVideoPreset(preset?.videoPreset ?? "best");
     setAudioFormat(preset?.audioFormat ?? "mp3");
     setAudioQuality(preset ? presetAudioQuality(preset) : "match");
+    setSampleRate(preset?.sampleRate ?? null);
     setSubLangs(preset?.subtitleLangs ?? "");
     setFetchAll(!!preset?.fetchAll);
     setUseGallery(preset?.engine === "gallerydl");
@@ -70,6 +72,7 @@ export function PresetDialog({
       videoPreset,
       audioFormat,
       audioQuality,
+      sampleRate: kind === "audio" ? sampleRate : null,
       subtitleLangs: kind === "video" && subLangs.trim() ? subLangs.trim() : null,
       embedSubs: kind === "video" && subLangs.trim() ? true : null,
       fetchAll: kind === "video" && fetchAll ? true : null,
@@ -161,6 +164,8 @@ export function PresetDialog({
               onFormatChange={setAudioFormat}
               quality={audioQuality}
               onQualityChange={setAudioQuality}
+              sampleRate={sampleRate}
+              onSampleRateChange={setSampleRate}
             />
           )}
 

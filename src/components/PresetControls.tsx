@@ -1,11 +1,13 @@
 // Reusable per-download option controls, shared by the preset editor.
 
 import { AudioLines, Film, Music } from "lucide-react";
-import type { AudioFormat, AudioQuality, DownloadKind } from "@/lib/types";
+import type { AudioFormat, AudioQuality, DownloadKind, SampleRate } from "@/lib/types";
 import {
   AUDIO_FORMATS,
   AUDIO_QUALITIES,
   LOSSY_FORMATS,
+  SAMPLE_RATES,
+  sampleRateApplies,
   VIDEO_PRESETS,
   videoPresetLabel,
 } from "@/lib/presets";
@@ -75,11 +77,16 @@ export function AudioOptions({
   onFormatChange,
   quality,
   onQualityChange,
+  sampleRate,
+  onSampleRateChange,
 }: {
   format: AudioFormat;
   onFormatChange: (v: AudioFormat) => void;
   quality: AudioQuality;
   onQualityChange: (v: AudioQuality) => void;
+  /** `null` = use the global default; omit both props to hide the control. */
+  sampleRate?: SampleRate | null;
+  onSampleRateChange?: (v: SampleRate | null) => void;
 }) {
   const t = useT();
   const showQuality = LOSSY_FORMATS.includes(format);
@@ -124,6 +131,27 @@ export function AudioOptions({
           <p className="text-[10px] text-muted-foreground opacity-70">
             {t(AUDIO_QUALITIES.find((q) => q.value === quality)?.hint ?? "dl.qMatch")}
           </p>
+        </div>
+      )}
+      {onSampleRateChange && sampleRateApplies(format) && (
+        <div className="space-y-1.5">
+          <Label className="text-xs text-muted-foreground">{t("dl.sampleRate")}</Label>
+          <Select
+            value={sampleRate ?? "default"}
+            onValueChange={(v) => onSampleRateChange(v === "default" ? null : (v as SampleRate))}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">{t("dl.sampleRateDefault")}</SelectItem>
+              {SAMPLE_RATES.map((r) => (
+                <SelectItem key={r.value} value={r.value}>
+                  {t(r.label)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )}
     </div>

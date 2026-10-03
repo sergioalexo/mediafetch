@@ -16,6 +16,9 @@ export type AudioFormat = "mp3" | "flac" | "wav" | "aac" | "opus" | "source";
 /** Legacy MP3 bitrate mode (superseded by AudioQuality). */
 export type BitrateMode = "cbr" | "vbr";
 
+/** Sample rate for re-encoded audio. "original" skips resampling entirely. */
+export type SampleRate = "48000" | "44100" | "96000" | "original";
+
 /**
  * Bitrate/quality for lossy encoded audio (mp3/aac/opus).
  * - "match": nearest standard CBR that covers the source bitrate.
@@ -69,6 +72,8 @@ export interface DownloadOptions {
   customYtdlpArgs?: string | null;
   /** Extra raw ffmpeg arguments passed via --postprocessor-args (advanced). */
   customFfmpegArgs?: string | null;
+  /** Per-task sample rate override; null uses the global setting. */
+  sampleRate?: SampleRate | null;
 }
 
 export interface Preset {
@@ -97,6 +102,8 @@ export interface Preset {
   customYtdlpArgs?: string | null;
   /** Extra raw ffmpeg arguments passed via --postprocessor-args (advanced). */
   customFfmpegArgs?: string | null;
+  /** Optional override; null uses the global setting. */
+  sampleRate?: SampleRate | null;
 }
 
 export interface DownloadTask {
@@ -142,6 +149,8 @@ export interface Settings {
   embedMetadata: boolean;
   /** Use joint stereo when encoding constant-bitrate MP3. */
   jointStereo: boolean;
+  /** Default sample rate for re-encoded audio; a preset's own override wins. */
+  audioSampleRate: SampleRate;
   writeSubs: boolean;
   embedSubs: boolean;
   subLangs: string;

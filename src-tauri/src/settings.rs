@@ -36,6 +36,10 @@ pub struct Preset {
     /// Extra raw ffmpeg arguments passed via --postprocessor-args (advanced).
     #[serde(default)]
     pub custom_ffmpeg_args: Option<String>,
+    /// Per-preset sample rate override: "48000" | "44100" | "96000" |
+    /// "original". `None` means use the global setting.
+    #[serde(default)]
+    pub sample_rate: Option<String>,
 }
 
 fn default_audio_quality() -> String {
@@ -43,11 +47,13 @@ fn default_audio_quality() -> String {
 }
 
 pub const SOCIAL_MEDIA_PRESET_ID: &str = "social-media";
+pub const MUSIC_320_PRESET_ID: &str = "audio-mp3-320";
 
 /// Marker for the one-time seeding of [`social_media_preset`] into settings
 /// files written before it existed. Recorded so deleting the preset sticks.
 const SOCIAL_MEDIA_MIGRATION: &str = "social-media-preset";
 const AUTO_THEME_MIGRATION: &str = "auto-theme";
+const MUSIC_320_MIGRATION: &str = "music-320-defaults";
 
 /// Photos *and* videos, exactly as the site stores them. The "media" quality
 /// preset resolves to a single progressive file, which is the only thing an
@@ -69,6 +75,29 @@ fn social_media_preset() -> Preset {
         engine: Some("gallerydl".into()),
         custom_ytdlp_args: None,
         custom_ffmpeg_args: None,
+        sample_rate: None,
+    }
+}
+
+/// Music services stream well below 320 kbps already (SoundCloud is usually
+/// 128–256 kbps) — this is "max compatibility, not more detail", but it's
+/// the safe default every player and device handles.
+fn music_320_preset() -> Preset {
+    Preset {
+        id: MUSIC_320_PRESET_ID.into(),
+        name: "Music · MP3 320".into(),
+        kind: "audio".into(),
+        video_preset: "best".into(),
+        audio_format: "mp3".into(),
+        audio_quality: "320".into(),
+        bitrate_mode: None,
+        subtitle_langs: None,
+        embed_subs: None,
+        fetch_all: None,
+        engine: None,
+        custom_ytdlp_args: None,
+        custom_ffmpeg_args: None,
+        sample_rate: None,
     }
 }
 
@@ -88,6 +117,7 @@ fn default_presets() -> Vec<Preset> {
             engine: None,
             custom_ytdlp_args: None,
             custom_ffmpeg_args: None,
+            sample_rate: None,
         },
         Preset {
             id: "audio-mp3".into(),
@@ -103,8 +133,10 @@ fn default_presets() -> Vec<Preset> {
             engine: None,
             custom_ytdlp_args: None,
             custom_ffmpeg_args: None,
+            sample_rate: None,
         },
         social_media_preset(),
+        music_320_preset(),
     ]
 }
 
@@ -125,6 +157,9 @@ pub struct Settings {
     /// Use joint stereo when encoding constant-bitrate MP3 (better quality
     /// per bit; off encodes plain stereo channels independently).
     pub joint_stereo: bool,
+    /// Default sample rate for re-encoded audio: "48000" | "44100" | "96000"
+    /// | "original" (no resampling). A preset's own `sampleRate` overrides it.
+    pub audio_sample_rate: String,
     pub write_subs: bool,
     pub embed_subs: bool,
     pub sub_langs: String,
@@ -177,6 +212,7 @@ impl Default for Settings {
             embed_thumbnail: true,
             embed_metadata: true,
             joint_stereo: true,
+            audio_sample_rate: "48000".into(),
             write_subs: false,
             embed_subs: true,
             sub_langs: "en".into(),
@@ -251,6 +287,24 @@ pub fn load(app: &AppHandle) -> Settings {
     if !settings.migrations.iter().any(|m| m == AUTO_THEME_MIGRATION) {
         settings.migrations.push(AUTO_THEME_MIGRATION.into());
         settings.theme = "auto".into();
+        let _ = save(app, &settings);
+    }
+    // Seed the MP3 320 preset once, and make it the YouTube Music / SoundCloud
+    // default — an existing user choice for either service is never
+    // overwritten (`.or_insert`), only a missing one is filled in.
+    if !settings.migrations.iter().any(|m| m == MUSIC_320_MIGRATION) {
+        settings.migrations.push(MUSIC_320_MIGRATION.into());
+        if !settings.presets.iter().any(|p| p.id == MUSIC_320_PRESET_ID) {
+            settings.presets.push(music_320_preset());
+        }
+        settings
+            .service_presets
+            .entry("youtube-music".into())
+            .or_insert_with(|| MUSIC_320_PRESET_ID.into());
+        settings
+            .service_presets
+            .entry("soundcloud".into())
+            .or_insert_with(|| MUSIC_320_PRESET_ID.into());
         let _ = save(app, &settings);
     }
     settings

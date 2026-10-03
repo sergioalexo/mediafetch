@@ -82,6 +82,10 @@ pub struct DownloadOptions {
     /// Extra raw ffmpeg arguments passed via --postprocessor-args (advanced).
     #[serde(default)]
     pub custom_ffmpeg_args: Option<String>,
+    /// Per-task sample rate override: "48000" | "44100" | "96000" |
+    /// "original". `None` means use the global setting.
+    #[serde(default)]
+    pub sample_rate: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

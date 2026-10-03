@@ -682,12 +682,27 @@ pub fn build_args(
                 kbps => format!("{kbps}K"), // forced CBR, e.g. "320"
             };
             args.extend(["--audio-quality".into(), arg]);
-            // Joint stereo squeezes more quality from constant-bitrate MP3.
-            if audio_format == "mp3" && quality != "vbr" && settings.joint_stereo {
-                args.extend([
-                    "--postprocessor-args".into(),
-                    "ExtractAudio:-joint_stereo 1".into(),
-                ]);
+        }
+
+        // Joint stereo (mp3 CBR) and the sample rate both land on ffmpeg's
+        // ExtractAudio postprocessor — merged into one `ExtractAudio:` string
+        // rather than two separate --postprocessor-args, since yt-dlp doesn't
+        // promise to combine repeated keys for the same postprocessor.
+        if audio_format != "source" {
+            let mut pp_args: Vec<String> = Vec::new();
+            if is_lossy_audio(audio_format)
+                && audio_format == "mp3"
+                && resolve_audio_quality(opts) != "vbr"
+                && settings.joint_stereo
+            {
+                pp_args.push("-joint_stereo 1".into());
+            }
+            if let Some(rate) = resolve_sample_rate(opts, settings, audio_format) {
+                pp_args.push(format!("-ar {rate}"));
+            }
+            if !pp_args.is_empty() {
+                args.push("--postprocessor-args".into());
+                args.push(format!("ExtractAudio:{}", pp_args.join(" ")));
             }
         }
     } else {
@@ -873,6 +888,37 @@ fn resolve_audio_quality(opts: &DownloadOptions) -> &str {
         Some("vbr") => "vbr",
         _ => "match",
     }
+}
+
+/// Resolve the sample rate to pass to ffmpeg's ExtractAudio postprocessor
+/// (`-ar <rate>`), or `None` when no resampling should happen at all.
+///
+/// Precedence: the task's own override, else the preset's, else the global
+/// setting. Clamped per format so ffmpeg never errors on a rate it can't
+/// encode: mp3/aac accept 44100 or 48000 (96000 falls back to 48000), opus is
+/// always 48000, flac/wav take any of the three, and "source" never resamples.
+fn resolve_sample_rate(opts: &DownloadOptions, settings: &Settings, audio_format: &str) -> Option<String> {
+    let requested = opts
+        .sample_rate
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&settings.audio_sample_rate);
+    if requested == "original" {
+        return None;
+    }
+    let rate = match audio_format {
+        "mp3" | "aac" => {
+            if requested == "96000" {
+                "48000"
+            } else {
+                requested
+            }
+        }
+        "opus" => "48000",
+        // flac/wav and anything else: no clamp, any of the three is valid.
+        _ => requested,
+    };
+    Some(rate.to_string())
 }
 
 /// Pick the smallest standard MP3 CBR bitrate that covers the source
@@ -1527,5 +1573,97 @@ async fn finish_history(app: &AppHandle, task: &DownloadTask, settings: &Setting
             _ => ("Download complete", "Download failed"),
         };
         crate::notify::show(app, if ok { done_title } else { fail_title }, &task.title);
+    }
+}
+
+#[cfg(test)]
+mod audio_tests {
+    use super::*;
+
+    fn opts(audio_quality: &str, sample_rate: Option<&str>) -> DownloadOptions {
+        DownloadOptions {
+            audio_quality: Some(audio_quality.into()),
+            sample_rate: sample_rate.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mp3_at_the_default_48k_clamps_unchanged() {
+        let settings = Settings { audio_sample_rate: "48000".into(), ..Default::default() };
+        assert_eq!(resolve_sample_rate(&opts("320", None), &settings, "mp3"), Some("48000".into()));
+    }
+
+    #[test]
+    fn mp3_requesting_96k_falls_back_to_48k() {
+        let settings = Settings { audio_sample_rate: "96000".into(), ..Default::default() };
+        assert_eq!(resolve_sample_rate(&opts("320", None), &settings, "mp3"), Some("48000".into()));
+    }
+
+    #[test]
+    fn aac_requesting_96k_also_falls_back_to_48k() {
+        let settings = Settings { audio_sample_rate: "96000".into(), ..Default::default() };
+        assert_eq!(resolve_sample_rate(&opts("320", None), &settings, "aac"), Some("48000".into()));
+    }
+
+    #[test]
+    fn opus_is_always_48k_regardless_of_the_setting() {
+        let settings = Settings { audio_sample_rate: "44100".into(), ..Default::default() };
+        assert_eq!(resolve_sample_rate(&opts("vbr", None), &settings, "opus"), Some("48000".into()));
+    }
+
+    #[test]
+    fn flac_at_96k_is_not_clamped() {
+        let settings = Settings { audio_sample_rate: "96000".into(), ..Default::default() };
+        assert_eq!(resolve_sample_rate(&opts("vbr", None), &settings, "flac"), Some("96000".into()));
+    }
+
+    #[test]
+    fn source_never_resamples() {
+        let settings = Settings { audio_sample_rate: "48000".into(), ..Default::default() };
+        // build_args itself skips resolve_sample_rate entirely for "source";
+        // this documents that "original" (the explicit per-task choice) also
+        // resolves to no resampling for any format.
+        assert_eq!(
+            resolve_sample_rate(&opts("match", Some("original")), &settings, "mp3"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_per_task_override_wins_over_the_global_setting() {
+        let settings = Settings { audio_sample_rate: "48000".into(), ..Default::default() };
+        assert_eq!(
+            resolve_sample_rate(&opts("320", Some("44100")), &settings, "mp3"),
+            Some("44100".into())
+        );
+    }
+
+    #[test]
+    fn mp3_320_with_joint_stereo_merges_into_one_extractaudio_postprocessor_arg() {
+        let opts = DownloadOptions {
+            url: "https://example.com/x".into(),
+            kind: "audio".into(),
+            format: Some("ba/b".into()),
+            audio_format: Some("mp3".into()),
+            audio_quality: Some("320".into()),
+            ..Default::default()
+        };
+        let settings = Settings {
+            joint_stereo: true,
+            audio_sample_rate: "48000".into(),
+            ..Default::default()
+        };
+        let mut pp_args: Vec<String> = Vec::new();
+        if is_lossy_audio("mp3")
+            && resolve_audio_quality(&opts) != "vbr"
+            && settings.joint_stereo
+        {
+            pp_args.push("-joint_stereo 1".into());
+        }
+        if let Some(rate) = resolve_sample_rate(&opts, &settings, "mp3") {
+            pp_args.push(format!("-ar {rate}"));
+        }
+        assert_eq!(pp_args.join(" "), "-joint_stereo 1 -ar 48000");
     }
 }

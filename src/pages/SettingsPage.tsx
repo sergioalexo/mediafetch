@@ -31,7 +31,7 @@ import type { CookieCheck, Preset, Settings } from "@/lib/types";
 import { useApp } from "@/lib/store";
 import { openIssueReport } from "@/lib/report";
 import { LANGUAGES, useT, type MsgKey } from "@/lib/i18n";
-import { presetSummary, SERVICES } from "@/lib/presets";
+import { presetSummary, SAMPLE_RATES, SERVICES } from "@/lib/presets";
 import { cn } from "@/lib/utils";
 import { PresetDialog } from "@/components/PresetDialog";
 import {
@@ -453,6 +453,23 @@ export function SettingsPage() {
               checked={settings.jointStereo}
               onCheckedChange={(v) => set({ jointStereo: v })}
             />
+          </Row>
+          <Row label={t("set.sampleRate")} hint={t("set.sampleRateHint")}>
+            <Select
+              value={settings.audioSampleRate}
+              onValueChange={(v) => set({ audioSampleRate: v as Settings["audioSampleRate"] })}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SAMPLE_RATES.map((r) => (
+                  <SelectItem key={r.value} value={r.value}>
+                    {t(r.label)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Row>
           <Row label={t("set.embedSubs")} hint={t("set.embedSubsHint")}>
             <Switch

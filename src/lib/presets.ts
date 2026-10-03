@@ -10,6 +10,7 @@ import type {
   Engine,
   HistoryEntry,
   Preset,
+  SampleRate,
 } from "./types";
 import type { MsgKey } from "./i18n";
 import { extractMediaId, normalizeUrl } from "./utils";
@@ -52,6 +53,35 @@ export function audioQualityLabel(q: AudioQuality, t: (k: MsgKey) => string): st
   return found.label ?? t(found.hint === "dl.qVbr" ? "dl.qVbrShort" : "dl.qMatchShort");
 }
 
+export const SAMPLE_RATES: { value: SampleRate; label: MsgKey }[] = [
+  { value: "48000", label: "dl.sr48" },
+  { value: "44100", label: "dl.sr44" },
+  { value: "96000", label: "dl.sr96" },
+  { value: "original", label: "dl.srOriginal" },
+];
+
+/** Formats that don't take a sample rate override at all — "Original" keeps
+ * the source stream untouched, so resampling doesn't apply. */
+export function sampleRateApplies(format: AudioFormat): boolean {
+  return format !== "source";
+}
+
+/** Clamp a requested sample rate to what each format can actually encode —
+ * mirrors the Rust side (downloader::resolve_sample_rate) so the preview and
+ * summary never show a rate the backend would silently correct. */
+export function clampSampleRate(rate: SampleRate, format: AudioFormat): SampleRate {
+  if (rate === "original") return rate;
+  if ((format === "mp3" || format === "aac") && rate === "96000") return "48000";
+  if (format === "opus") return "48000";
+  return rate;
+}
+
+/** Short human label for a sample rate value, e.g. "48 kHz". */
+export function sampleRateLabel(rate: SampleRate, t: (k: MsgKey) => string): string {
+  if (rate === "original") return t("dl.srOriginal");
+  return `${Number(rate) / 1000} kHz`;
+}
+
 export const VIDEO_PRESETS: {
   value: string;
   label: MsgKey | null;
@@ -85,12 +115,23 @@ export function videoPresetLabel(
 }
 
 /** Short human summary of a preset, e.g. "1080p" or "MP3 · 320 kbps". */
-export function presetSummary(preset: Preset, t: (k: MsgKey) => string): string {
+export function presetSummary(
+  preset: Preset,
+  t: (k: MsgKey) => string,
+  globalSampleRate: SampleRate = "48000"
+): string {
   if (preset.kind === "audio") {
     const fmt = audioFormatLabel(preset.audioFormat);
+    const rate = clampSampleRate(preset.sampleRate ?? globalSampleRate, preset.audioFormat);
+    // Only worth calling out when it differs from the 48 kHz default —
+    // showing it on every single preset would be noise.
+    const rateSuffix =
+      sampleRateApplies(preset.audioFormat) && rate !== "48000"
+        ? ` · ${sampleRateLabel(rate, t)}`
+        : "";
     // Lossless / original formats have no meaningful bitrate to show.
-    if (!LOSSY_FORMATS.includes(preset.audioFormat)) return fmt;
-    return `${fmt} · ${audioQualityLabel(presetAudioQuality(preset), t)}`;
+    if (!LOSSY_FORMATS.includes(preset.audioFormat)) return `${fmt}${rateSuffix}`;
+    return `${fmt} · ${audioQualityLabel(presetAudioQuality(preset), t)}${rateSuffix}`;
   }
   return videoPresetLabel(preset.videoPreset, t);
 }
@@ -157,6 +198,9 @@ interface BuildContext {
   engine?: Engine;
   /** Items this task should produce, when analysis counted them. */
   expectedItems?: number | null;
+  /** The current global default, for the formatNote display only — the
+   * backend resolves the real fallback itself when sampleRate is omitted. */
+  globalSampleRate?: SampleRate;
 }
 
 /** True when this preset downloads a link's items in one run. */
@@ -196,10 +240,13 @@ export function optionsFromPreset(
     engine: ctx.engine ?? "ytdlp",
     expectedItems: ctx.expectedItems ?? null,
     format: audio ? "ba/b" : vp.f,
-    formatNote: audio ? presetSummary(preset, t) : videoPresetLabel(vp.value, t),
+    formatNote: audio
+      ? presetSummary(preset, t, ctx.globalSampleRate ?? "48000")
+      : videoPresetLabel(vp.value, t),
     audioFormat: audio ? preset.audioFormat : null,
     audioQuality: audio ? presetAudioQuality(preset) : null,
     sourceAbr: audio ? ctx.sourceAbr ?? null : null,
+    sampleRate: audio ? preset.sampleRate ?? null : null,
     playlist: ctx.playlist ?? false,
     playlistItems: ctx.playlistItems ?? null,
     includeImages: !audio && IMAGE_CAPABLE_PRESETS.includes(preset.videoPreset),
