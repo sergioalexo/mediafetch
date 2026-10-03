@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampSampleRate, isAlreadyDownloaded, presetSummary } from "./presets";
+import { clampSampleRate, isAlreadyDownloaded, isConvertibleHost, presetSummary } from "./presets";
 import type { HistoryEntry, Preset } from "./types";
 import type { MsgKey } from "./i18n";
 
@@ -97,5 +97,22 @@ describe("presetSummary sample rate display", () => {
   it("never shows a rate for 'source' audio", () => {
     const source = presetSummary(preset({ audioFormat: "source", sampleRate: "44100" }), t);
     expect(source).not.toContain("kHz");
+  });
+});
+
+describe("isConvertibleHost", () => {
+  it("flags Spotify, Apple Music, Tidal and Deezer", () => {
+    expect(isConvertibleHost("https://open.spotify.com/track/abc")).toBe(true);
+    expect(isConvertibleHost("https://music.apple.com/us/album/x")).toBe(true);
+    expect(isConvertibleHost("https://tidal.com/browse/track/1")).toBe(true);
+    expect(isConvertibleHost("https://www.deezer.com/track/1")).toBe(true);
+  });
+
+  it("does not flag a supported host", () => {
+    expect(isConvertibleHost("https://www.youtube.com/watch?v=x")).toBe(false);
+  });
+
+  it("returns false for a malformed URL", () => {
+    expect(isConvertibleHost("not a url")).toBe(false);
   });
 });

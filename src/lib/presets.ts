@@ -283,6 +283,31 @@ export const SERVICES: ServiceDef[] = [
   { key: "facebook", label: "Facebook", hosts: ["facebook.com", "fb.watch"] },
 ];
 
+/** Prefilled to land straight on the Apple Music -> YouTube Music transfer,
+ * since that's the pairing MediaFetch can actually do something with next. */
+export const TUNEMYMUSIC_URL =
+  "https://www.tunemymusic.com/transfer/apple-music-to-youtube-music";
+
+/** Hosts yt-dlp can't fetch at all (DRM-gated streaming services) — pasting
+ * one of these is worth a "convert it first" hint instead of a bare failure. */
+export const CONVERTIBLE_HOSTS = [
+  "open.spotify.com",
+  "music.apple.com",
+  "tidal.com",
+  "deezer.com",
+];
+
+/** True when a URL's host is one of CONVERTIBLE_HOSTS. */
+export function isConvertibleHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return false;
+  }
+  return CONVERTIBLE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+}
+
 /** Which known service a URL belongs to, or null. */
 export function detectService(url: string): ServiceDef | null {
   let host: string;

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Download,
+  ExternalLink,
   Film,
   Link2,
   ListVideo,
@@ -28,6 +29,7 @@ import {
   optionsFromPreset,
   presetSummary,
   sourceAbrOf,
+  TUNEMYMUSIC_URL,
 } from "@/lib/presets";
 import { cn, extractUrls, formatDuration, formatEta, groupRank, statusRank } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -280,6 +282,16 @@ export function WorkspacePage() {
           </div>
         )}
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        {t("ws.tuneMyMusicTip")}{" "}
+        <button
+          onClick={() => void api.openExternal(TUNEMYMUSIC_URL)}
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          {t("ws.tuneMyMusic")}
+        </button>
+      </p>
 
       {/* Action bar */}
       {readyCount > 0 && (
@@ -554,6 +566,27 @@ function DraftCard({ draft }: { draft: Draft }) {
           <Badge variant="secondary" className="ml-auto shrink-0">
             {t("ws.analyzing")}
           </Badge>
+        </div>
+      )}
+
+      {draft.status === "unsupported" && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="min-w-0 flex-1 truncate text-muted-foreground" title={draft.url}>
+            {draft.url}
+          </span>
+          <Badge variant="secondary" className="shrink-0">
+            {t("ws.unsupported")}
+          </Badge>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void api.openExternal(TUNEMYMUSIC_URL)}
+          >
+            <ExternalLink className="h-3.5 w-3.5" /> {t("ws.tuneMyMusic")}
+          </Button>
+          <Button variant="ghost" size="iconSm" onClick={() => removeDraft(draft.id)}>
+            <X className="h-3.5 w-3.5" />
+          </Button>
         </div>
       )}
 

@@ -17,6 +17,7 @@ import * as api from "./api";
 import { translate, type MsgKey } from "./i18n";
 import {
   isAlreadyDownloaded,
+  isConvertibleHost,
   isFetchAll,
   optionsFromPreset,
   presetIdForUrl,
@@ -43,7 +44,7 @@ export interface Draft {
   id: string;
   url: string;
   presetId: string;
-  status: "analyzing" | "ready" | "error";
+  status: "analyzing" | "ready" | "error" | "unsupported";
   result?: AnalyzeResult | null;
   error?: string | null;
   /** Selected playlist entry indices (only for playlist results). */
@@ -167,7 +168,10 @@ export const useApp = create<AppState>((set, get) => ({
           s?.defaultPresetId ?? "",
           (id) => !!s?.presets.some((p) => p.id === id)
         ),
-        status: "analyzing",
+        // Spotify/Apple Music/Tidal/Deezer links aren't fetchable at all
+        // (DRM-gated streaming) — skip straight to the Tune My Music hint
+        // instead of burning an analyze call that can only fail.
+        status: isConvertibleHost(url) ? ("unsupported" as const) : ("analyzing" as const),
         result: null,
         selected: [],
         collapsed: false,
@@ -176,7 +180,9 @@ export const useApp = create<AppState>((set, get) => ({
     if (fresh.length === 0) return;
     // Newest links go on top so a fresh paste is always the first card.
     set((s) => ({ drafts: [...fresh, ...s.drafts] }));
-    for (const d of fresh) scheduleAnalyze(get, set, d.id);
+    for (const d of fresh) {
+      if (d.status === "analyzing") scheduleAnalyze(get, set, d.id);
+    }
   },
   setDraftPreset: (id, presetId) =>
     set((s) => ({
