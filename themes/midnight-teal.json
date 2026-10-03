@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "id": "midnight-teal",
+  "name": "Midnight Teal",
+  "author": "sergioalexo",
+  "base": "dark",
+  "radius": "0.75rem",
+  "colors": {
+    "background": "200 35% 6%",
+    "foreground": "180 25% 94%",
+    "card": "200 30% 9%",
+    "card-foreground": "180 25% 94%",
+    "popover": "200 30% 8%",
+    "popover-foreground": "180 25% 94%",
+    "primary": "174 70% 45%",
+    "primary-foreground": "200 35% 6%",
+    "secondary": "200 20% 16%",
+    "secondary-foreground": "180 25% 94%",
+    "muted": "200 20% 15%",
+    "muted-foreground": "200 15% 62%",
+    "accent": "200 20% 18%",
+    "accent-foreground": "180 25% 94%",
+    "destructive": "0 72% 55%",
+    "destructive-foreground": "0 0% 98%",
+    "success": "142 65% 45%",
+    "success-foreground": "0 0% 100%",
+    "border": "200 20% 18%",
+    "input": "200 20% 20%",
+    "ring": "174 70% 45%"
+  }
+}

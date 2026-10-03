@@ -25,6 +25,7 @@ import {
   sourceAbrOf,
 } from "./presets";
 import { extractUrls } from "./utils";
+import { applyCustomTheme, customThemeId, type Theme } from "./theme";
 
 export type Page = "downloads" | "history" | "stats" | "logs" | "settings" | "binaries";
 
@@ -75,6 +76,18 @@ interface AppState {
   settings: Settings | null;
   loadSettings: () => Promise<void>;
   updateSettings: (patch: Partial<Settings>) => Promise<void>;
+
+  // Custom themes (lib/theme.ts). Built-in auto/dark/light stay plain
+  // Settings.theme values; a custom one is "custom:<id>" into this list.
+  customThemes: Theme[];
+  communityThemes: Theme[];
+  themesLoading: boolean;
+  loadThemes: () => Promise<void>;
+  loadCommunityThemes: () => Promise<void>;
+  saveCustomTheme: (theme: Theme) => Promise<void>;
+  deleteCustomTheme: (id: string) => Promise<void>;
+  importCustomTheme: (path: string) => Promise<Theme>;
+  exportCustomTheme: (id: string, path: string) => Promise<void>;
 
   queue: DownloadTask[];
   history: HistoryEntry[];
@@ -133,18 +146,67 @@ export const useApp = create<AppState>((set, get) => ({
 
   settings: null,
   loadSettings: async () => {
+    // Custom themes have to be in hand before a "custom:<id>" theme setting
+    // can be applied, so this loads first.
+    await get().loadThemes();
     const settings = await api.getSettings();
     set({ settings });
-    applyTheme(settings.theme);
+    applyTheme(settings.theme, get().customThemes);
   },
   updateSettings: async (patch) => {
     const cur = get().settings;
     if (!cur) return;
     const next = { ...cur, ...patch };
     set({ settings: next });
-    if (patch.theme !== undefined) applyTheme(patch.theme);
+    if (patch.theme !== undefined) applyTheme(patch.theme, get().customThemes);
     await api.saveSettings(next);
   },
+
+  customThemes: [],
+  communityThemes: [],
+  themesLoading: false,
+  loadThemes: async () => {
+    try {
+      const customThemes = await api.listThemes();
+      set({ customThemes });
+    } catch {
+      // A fresh profile has no themes dir yet; nothing to load.
+    }
+  },
+  loadCommunityThemes: async () => {
+    set({ themesLoading: true });
+    try {
+      const communityThemes = await api.fetchCommunityThemes();
+      set({ communityThemes });
+    } catch (e) {
+      get().toast({ title: translate(get().settings?.language ?? "en", "th.fetchFailed"), description: String(e), variant: "error" });
+    } finally {
+      set({ themesLoading: false });
+    }
+  },
+  saveCustomTheme: async (theme) => {
+    await api.saveTheme(theme);
+    await get().loadThemes();
+    // Editing the currently-applied theme should repaint immediately.
+    const settings = get().settings;
+    if (settings && customThemeId(settings.theme) === theme.id) {
+      applyTheme(settings.theme, get().customThemes);
+    }
+  },
+  deleteCustomTheme: async (id) => {
+    await api.deleteTheme(id);
+    await get().loadThemes();
+    const settings = get().settings;
+    if (settings && customThemeId(settings.theme) === id) {
+      void get().updateSettings({ theme: "auto" });
+    }
+  },
+  importCustomTheme: async (path) => {
+    const theme = await api.importTheme(path);
+    await get().loadThemes();
+    return theme;
+  },
+  exportCustomTheme: (id, path) => api.exportTheme(id, path),
 
   queue: [],
   history: [],
@@ -426,9 +488,23 @@ const systemDark =
     : null;
 let unwatchSystem: (() => void) | null = null;
 
-function applyTheme(theme: Settings["theme"]) {
+function applyTheme(theme: string, customThemes: Theme[]) {
   unwatchSystem?.();
   unwatchSystem = null;
+
+  const customId = customThemeId(theme);
+  if (customId) {
+    const found = customThemes.find((t) => t.id === customId);
+    // A theme that was deleted out from under the setting (e.g. on another
+    // install, before a backup was restored) falls back to the built-in
+    // dark look rather than applying nothing.
+    applyCustomTheme(found ?? null);
+    if (!found) document.documentElement.classList.toggle("dark", true);
+    return;
+  }
+  // Switching back to a built-in theme clears any inline custom properties
+  // a previous custom theme left on the root.
+  applyCustomTheme(null);
 
   if (theme === "auto") {
     const sync = () =>

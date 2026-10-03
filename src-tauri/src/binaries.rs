@@ -306,13 +306,13 @@ pub fn tool_version(app: &AppHandle, name: &str) -> Option<String> {
 }
 
 /// The proxy configured in the app settings ("" when unset).
-fn app_proxy(app: &AppHandle) -> String {
+pub(crate) fn app_proxy(app: &AppHandle) -> String {
     let state = app.state::<crate::downloader::AppState>();
     let s = state.settings.lock().unwrap();
     s.proxy.trim().to_string()
 }
 
-fn http_client(proxy: &str) -> Result<reqwest::Client, String> {
+pub(crate) fn http_client(proxy: &str) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder().user_agent("MediaFetch (https://github.com)");
     if !proxy.is_empty() {
         builder = builder.proxy(

@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "id": "paper-light",
+  "name": "Paper",
+  "author": "sergioalexo",
+  "base": "light",
+  "radius": "0.5rem",
+  "colors": {
+    "background": "40 30% 97%",
+    "foreground": "30 10% 15%",
+    "card": "40 25% 99%",
+    "card-foreground": "30 10% 15%",
+    "popover": "40 25% 99%",
+    "popover-foreground": "30 10% 15%",
+    "primary": "25 85% 45%",
+    "primary-foreground": "0 0% 100%",
+    "secondary": "40 20% 92%",
+    "secondary-foreground": "30 10% 15%",
+    "muted": "40 20% 92%",
+    "muted-foreground": "30 8% 45%",
+    "accent": "40 25% 88%",
+    "accent-foreground": "30 10% 15%",
+    "destructive": "0 72% 48%",
+    "destructive-foreground": "0 0% 98%",
+    "success": "142 65% 38%",
+    "success-foreground": "0 0% 100%",
+    "border": "40 15% 85%",
+    "input": "40 15% 85%",
+    "ring": "25 85% 45%"
+  }
+}

@@ -11,6 +11,7 @@ import type {
   ImportReport,
   Settings,
 } from "./types";
+import type { Theme } from "./theme";
 
 // ---- Settings ----
 export const getSettings = () => invoke<Settings>("get_settings");
@@ -55,6 +56,15 @@ export const importHistory = (path: string) => invoke<ImportReport>("import_hist
 export const showInFolder = (path: string) => invoke<void>("show_in_folder", { path });
 export const openFile = (path: string) => invoke<void>("open_file", { path });
 export const openExternal = (url: string) => invoke<void>("open_external", { url });
+
+// ---- Custom themes ----
+export const listThemes = () => invoke<Theme[]>("list_themes");
+export const saveTheme = (theme: Theme) => invoke<void>("save_theme", { theme });
+export const deleteTheme = (id: string) => invoke<void>("delete_theme", { id });
+export const importTheme = (path: string) => invoke<Theme>("import_theme", { path });
+export const exportTheme = (id: string, path: string) =>
+  invoke<void>("export_theme", { id, path });
+export const fetchCommunityThemes = () => invoke<Theme[]>("fetch_community_themes");
 
 // ---- App updates ----
 export const checkAppUpdate = () => invoke<AppUpdateStatus>("check_app_update");

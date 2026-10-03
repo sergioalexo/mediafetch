@@ -16,8 +16,7 @@ import {
   Layers,
   Lightbulb,
   LifeBuoy,
-  MonitorCog,
-  Moon,
+  Palette,
   Pencil,
   Plus,
   RefreshCcw,
@@ -25,7 +24,6 @@ import {
   Shield,
   ShieldAlert,
   SlidersHorizontal,
-  Sun,
   Upload,
 } from "lucide-react";
 import type { CookieCheck, Preset, Settings } from "@/lib/types";
@@ -35,6 +33,7 @@ import { LANGUAGES, useT, type MsgKey } from "@/lib/i18n";
 import { presetSummary, SAMPLE_RATES, SERVICES } from "@/lib/presets";
 import { cn } from "@/lib/utils";
 import { PresetDialog } from "@/components/PresetDialog";
+import { ThemeSection } from "@/components/ThemeSection";
 import {
   Dialog,
   DialogContent,
@@ -199,6 +198,18 @@ export function SettingsPage() {
         <p className="text-sm text-muted-foreground">{t("set.subtitle")}</p>
       </div>
 
+      {/* Appearance */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Palette className="h-4 w-4 text-primary" /> {t("th.appearance")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ThemeSection />
+        </CardContent>
+      </Card>
+
       {/* General */}
       <Card>
         <CardHeader className="pb-2">
@@ -207,33 +218,6 @@ export function SettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="divide-y divide-border/60">
-          <Row label={t("set.theme")} hint={t("set.themeHint")}>
-            <Select
-              value={settings.theme ?? "auto"}
-              onValueChange={(v) => set({ theme: v as Settings["theme"] })}
-            >
-              <SelectTrigger className="w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">
-                  <span className="flex items-center gap-2">
-                    <MonitorCog className="h-4 w-4" /> {t("theme.auto")}
-                  </span>
-                </SelectItem>
-                <SelectItem value="light">
-                  <span className="flex items-center gap-2">
-                    <Sun className="h-4 w-4" /> {t("theme.light")}
-                  </span>
-                </SelectItem>
-                <SelectItem value="dark">
-                  <span className="flex items-center gap-2">
-                    <Moon className="h-4 w-4" /> {t("theme.dark")}
-                  </span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </Row>
           <Row label={t("set.language")}>
             <Select
               value={settings.language ?? "en"}

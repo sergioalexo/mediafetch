@@ -8,6 +8,7 @@ mod history;
 mod metadata;
 mod notify;
 mod settings;
+mod themes;
 mod types;
 
 use downloader::AppState;
@@ -668,7 +669,13 @@ fn main() {
             reset_components,
             list_binary_versions,
             check_app_update,
-            collect_diagnostics
+            collect_diagnostics,
+            themes::list_themes,
+            themes::save_theme,
+            themes::delete_theme,
+            themes::import_theme,
+            themes::export_theme,
+            themes::fetch_community_themes
         ])
         .run(tauri::generate_context!())
         .expect("error while running MediaFetch");

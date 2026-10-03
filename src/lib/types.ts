@@ -172,7 +172,8 @@ export interface Settings {
   /** Auto re-queue a failed download this many times before leaving it Failed. 0 disables. */
   autoRetryLimit: number;
   /** "auto" follows the OS light/dark preference. */
-  theme: "auto" | "dark" | "light";
+  /** `"custom:<id>"` applies a saved custom theme (lib/theme.ts). */
+  theme: "auto" | "dark" | "light" | string;
   presets: Preset[];
   defaultPresetId: string;
   /** Per-service default preset overrides: service key -> preset id. */
