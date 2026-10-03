@@ -8,6 +8,7 @@ import type {
   DownloadOptions,
   DownloadTask,
   HistoryEntry,
+  ImportReport,
   Settings,
 } from "./types";
 
@@ -48,6 +49,9 @@ export const getHistory = () => invoke<HistoryEntry[]>("get_history");
 export const clearHistory = () => invoke<void>("clear_history");
 export const removeHistoryEntry = (id: string) =>
   invoke<void>("remove_history_entry", { id });
+/** Writes a backup file; resolves with how many entries it contains. */
+export const exportHistory = (path: string) => invoke<number>("export_history", { path });
+export const importHistory = (path: string) => invoke<ImportReport>("import_history", { path });
 export const showInFolder = (path: string) => invoke<void>("show_in_folder", { path });
 export const openFile = (path: string) => invoke<void>("open_file", { path });
 export const openExternal = (url: string) => invoke<void>("open_external", { url });

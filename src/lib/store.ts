@@ -343,6 +343,12 @@ export const useApp = create<AppState>((set, get) => ({
       }
     });
 
+    // Fired after a history import merges entries in on the Rust side —
+    // replace the whole list rather than trying to patch in just what's new.
+    await listen<HistoryEntry[]>("history-replaced", (e) => {
+      set({ history: e.payload });
+    });
+
     // The log book streams in live; seed it with whatever was recorded before
     // the window opened (the startup version line, mainly).
     await get().loadAppLog();

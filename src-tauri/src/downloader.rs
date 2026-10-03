@@ -175,6 +175,13 @@ pub fn emit_queue(app: &AppHandle) {
     let _ = app.emit("queue-changed", &snapshot);
 }
 
+/// After an import merges entries in on the Rust side, tell the frontend to
+/// replace its whole `history` with what's actually on disk now, rather than
+/// trying to patch in just what was added.
+pub fn emit_history_replaced(app: &AppHandle) {
+    let _ = app.emit("history-replaced", &history::load(app));
+}
+
 fn emit_task(app: &AppHandle, task: &DownloadTask) {
     let _ = app.emit("task-progress", task);
 }

@@ -2,7 +2,34 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
-use crate::types::HistoryEntry;
+use crate::types::{now_unix, HistoryEntry};
+
+/// Reject an import file bigger than this outright — a malformed or hostile
+/// file has no business being this large, and reading it in whole as a
+/// String would otherwise be the first thing this code does with it.
+const MAX_IMPORT_BYTES: u64 = 50 * 1024 * 1024;
+
+/// What `export_history` writes to disk, and the shape `import_history`
+/// accepts (in addition to a bare `HistoryEntry[]` array — a raw
+/// `history.json` copied from another install).
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportFile {
+    app: String,
+    format: u32,
+    exported_at: u64,
+    entries: Vec<HistoryEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    archive: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportReport {
+    pub added: usize,
+    pub skipped: usize,
+    pub archive_added: usize,
+}
 
 /// Serializes the whole read-modify-write cycle, not just the write. Two
 /// downloads finishing at the same moment used to read the same list, then
@@ -125,6 +152,118 @@ pub fn merge_one(entries: &mut Vec<HistoryEntry>, entry: HistoryEntry) {
     entries.insert(0, entry);
 }
 
+/// Merge a batch of incoming entries into an already-loaded list, applying
+/// the import rules: skip a duplicate id, skip a completed entry whose media
+/// already has a completed entry, let a completed import replace an
+/// existing failure. Pure — no disk I/O — so it's unit-testable on its own.
+fn merge_import(entries: &mut Vec<HistoryEntry>, incoming: Vec<HistoryEntry>) -> ImportReport {
+    let mut report = ImportReport::default();
+    for mut entry in incoming {
+        if !valid_import_entry(&entry) {
+            report.skipped += 1;
+            continue;
+        }
+        let dup_by_id = entries.iter().any(|e| e.id == entry.id);
+        let dup_completed = entry.status == "completed"
+            && entries
+                .iter()
+                .any(|e| e.status == "completed" && same_media(e, &entry));
+        if dup_by_id || dup_completed {
+            report.skipped += 1;
+            continue;
+        }
+        entry.source = Some("imported".into());
+        merge_one(entries, entry);
+        report.added += 1;
+    }
+    report
+}
+
+fn archive_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("download-archive.txt"))
+        .map_err(|e| e.to_string())
+}
+
+fn read_archive_lines(path: &PathBuf) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// Write the current history (and the download archive, if present) to a
+/// single backup file the user chose a location for.
+pub fn export(app: &AppHandle, path: &str) -> Result<usize, String> {
+    let entries = load(app);
+    let archive = archive_path(app).ok().filter(|p| p.exists()).map(|p| read_archive_lines(&p));
+    let file = ExportFile {
+        app: "MediaFetch".into(),
+        format: 1,
+        exported_at: now_unix(),
+        entries: entries.clone(),
+        archive,
+    };
+    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    Ok(entries.len())
+}
+
+/// Validate one incoming entry well enough that a malformed or hand-edited
+/// file can't corrupt the real history: a URL, a known status, nothing else
+/// required (old exports predate several optional fields).
+fn valid_import_entry(e: &HistoryEntry) -> bool {
+    !e.url.trim().is_empty() && matches!(e.status.as_str(), "completed" | "failed")
+}
+
+/// Merge a backup (this app's export format, or a bare `HistoryEntry[]`
+/// array copied straight from another install's `history.json`) into the
+/// current history. Never replaces — only adds what isn't already there.
+pub fn import(app: &AppHandle, path: &str) -> Result<ImportReport, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_IMPORT_BYTES {
+        return Err("That file is larger than 50 MB — it doesn't look like a history backup."
+            .into());
+    }
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+
+    let (incoming, incoming_archive): (Vec<HistoryEntry>, Vec<String>) =
+        if let Ok(file) = serde_json::from_str::<ExportFile>(&text) {
+            (file.entries, file.archive.unwrap_or_default())
+        } else if let Ok(bare) = serde_json::from_str::<Vec<HistoryEntry>>(&text) {
+            (bare, Vec::new())
+        } else {
+            return Err("Not a MediaFetch history file.".into());
+        };
+
+    let _guard = HISTORY_LOCK.lock().unwrap();
+    let mut entries = read_unlocked(app);
+    let mut report = merge_import(&mut entries, incoming);
+    apply_retention(&mut entries);
+    save(app, &entries);
+    drop(_guard);
+
+    if !incoming_archive.is_empty() {
+        if let Ok(path) = archive_path(app) {
+            let mut lines: std::collections::BTreeSet<String> =
+                read_archive_lines(&path).into_iter().collect();
+            let before = lines.len();
+            for line in incoming_archive {
+                if !line.trim().is_empty() {
+                    lines.insert(line);
+                }
+            }
+            report.archive_added = lines.len().saturating_sub(before);
+            if report.archive_added > 0 {
+                let joined = lines.into_iter().collect::<Vec<_>>().join("\n");
+                let _ = std::fs::write(&path, joined + "\n");
+            }
+        }
+    }
+
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +347,81 @@ mod tests {
         assert_eq!(kept.iter().filter(|e| e.status == "completed").count(), 2);
         // Newest kept, within each bucket.
         assert_eq!(kept.iter().find(|e| e.status == "completed").unwrap().id, "14");
+    }
+
+    #[test]
+    fn import_skips_an_existing_id() {
+        let mut entries = vec![entry("1", "https://x.com/a", "completed", None, 1)];
+        let report = merge_import(
+            &mut entries,
+            vec![entry("1", "https://x.com/a", "completed", None, 1)],
+        );
+        assert_eq!(report.added, 0);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn import_skips_a_completed_duplicate_of_the_same_media_under_a_different_id() {
+        let mut entries = vec![entry("1", "https://x.com/a", "completed", Some("X:a"), 1)];
+        let report = merge_import(
+            &mut entries,
+            vec![entry("2", "https://x.com/a", "completed", Some("X:a"), 5)],
+        );
+        assert_eq!(report.added, 0);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn import_replaces_a_failed_entry_with_a_completed_one() {
+        let mut entries = vec![entry("1", "https://x.com/a", "failed", Some("X:a"), 1)];
+        let report = merge_import(
+            &mut entries,
+            vec![entry("2", "https://x.com/a", "completed", Some("X:a"), 5)],
+        );
+        assert_eq!(report.added, 1);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, "completed");
+        assert_eq!(entries[0].source.as_deref(), Some("imported"));
+    }
+
+    #[test]
+    fn import_adds_a_new_entry_and_marks_it_imported() {
+        let mut entries = vec![entry("1", "https://x.com/a", "completed", None, 1)];
+        let report = merge_import(
+            &mut entries,
+            vec![entry("2", "https://x.com/b", "completed", None, 2)],
+        );
+        assert_eq!(report.added, 1);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries.iter().find(|e| e.id == "2").unwrap().source.as_deref(),
+            Some("imported")
+        );
+    }
+
+    #[test]
+    fn import_skips_an_entry_missing_a_url_or_with_an_unknown_status() {
+        let mut entries: Vec<HistoryEntry> = Vec::new();
+        let mut no_url = entry("1", "https://x.com/a", "completed", None, 1);
+        no_url.url = "".into();
+        let mut bad_status = entry("2", "https://x.com/b", "completed", None, 1);
+        bad_status.status = "weird".into();
+        let report = merge_import(&mut entries, vec![no_url, bad_status]);
+        assert_eq!(report.added, 0);
+        assert_eq!(report.skipped, 2);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn importing_twice_adds_nothing_the_second_time() {
+        let mut entries = vec![entry("1", "https://x.com/a", "completed", Some("X:a"), 1)];
+        let backup = vec![entry("1", "https://x.com/a", "completed", Some("X:a"), 1)];
+        merge_import(&mut entries, backup.clone());
+        let report = merge_import(&mut entries, backup);
+        assert_eq!(report.added, 0);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(entries.len(), 1);
     }
 }

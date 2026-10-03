@@ -1,10 +1,13 @@
 import { useState, type ReactNode } from "react";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   AudioLines,
   Bug,
   CheckCircle2,
   Cookie,
+  Database,
   Loader2,
+  Download as DownloadIcon,
   Film,
   FolderOpen,
   Gauge,
@@ -22,6 +25,7 @@ import {
   ShieldAlert,
   SlidersHorizontal,
   Sun,
+  Upload,
 } from "lucide-react";
 import type { CookieCheck, Preset, Settings } from "@/lib/types";
 import { useApp } from "@/lib/store";
@@ -154,6 +158,35 @@ export function SettingsPage() {
   const [editPreset, setEditPreset] = useState<Preset | null>(null);
   const [presetDialog, setPresetDialog] = useState(false);
   const [tplGuide, setTplGuide] = useState(false);
+
+  const backUpHistory = async () => {
+    const date = new Date().toISOString().slice(0, 10);
+    const path = await save({
+      defaultPath: `mediafetch-history-${date}.mediafetch-history.json`,
+      filters: [{ name: "MediaFetch history", extensions: ["mediafetch-history.json", "json"] }],
+    });
+    if (!path) return;
+    const n = await api.exportHistory(path);
+    toast({ title: t("h.backedUp", { n }), variant: "default" });
+  };
+
+  const importHistoryBackup = async () => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "MediaFetch history", extensions: ["mediafetch-history.json", "json"] }],
+    });
+    if (!path || Array.isArray(path)) return;
+    try {
+      const report = await api.importHistory(path);
+      toast({
+        title: t("h.imported", { n: report.added }),
+        description: t("h.importedSkipped", { n: report.skipped }),
+        variant: "default",
+      });
+    } catch (e) {
+      toast({ title: t("h.importFailed"), description: String(e), variant: "error" });
+    }
+  };
 
   if (!settings) return null;
   const set = (patch: Partial<Settings>) => void updateSettings(patch);
@@ -651,6 +684,26 @@ export function SettingsPage() {
       </Card>
 
       {/* Legal */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Database className="h-4 w-4 text-primary" /> {t("set.data")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="divide-y divide-border/60">
+          <Row label={t("set.backupHistory")} hint={t("set.backupHistoryHint")}>
+            <Button variant="outline" size="sm" onClick={() => void backUpHistory()}>
+              <DownloadIcon className="h-3.5 w-3.5" /> {t("h.backup")}
+            </Button>
+          </Row>
+          <Row label={t("set.importHistory")} hint={t("set.importHistoryHint")}>
+            <Button variant="outline" size="sm" onClick={() => void importHistoryBackup()}>
+              <Upload className="h-3.5 w-3.5" /> {t("h.import")}
+            </Button>
+          </Row>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm">

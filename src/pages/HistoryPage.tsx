@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   Copy,
+  Download,
   ExternalLink,
   FolderOpen,
   Globe,
@@ -9,6 +11,7 @@ import {
   RotateCcw,
   Search,
   Trash2,
+  Upload,
   Video,
   X,
 } from "lucide-react";
@@ -55,6 +58,36 @@ export function HistoryPage() {
     useApp.setState({ history: items });
   };
 
+  const backUp = async () => {
+    const date = new Date().toISOString().slice(0, 10);
+    const path = await save({
+      defaultPath: `mediafetch-history-${date}.mediafetch-history.json`,
+      filters: [{ name: "MediaFetch history", extensions: ["mediafetch-history.json", "json"] }],
+    });
+    if (!path) return;
+    const n = await api.exportHistory(path);
+    toast({ title: t("h.backedUp", { n }), variant: "default" });
+  };
+
+  const importBackup = async () => {
+    const path = await open({
+      multiple: false,
+      filters: [{ name: "MediaFetch history", extensions: ["mediafetch-history.json", "json"] }],
+    });
+    if (!path || Array.isArray(path)) return;
+    try {
+      const report = await api.importHistory(path);
+      await refresh();
+      toast({
+        title: t("h.imported", { n: report.added }),
+        description: t("h.importedSkipped", { n: report.skipped }),
+        variant: "default",
+      });
+    } catch (e) {
+      toast({ title: t("h.importFailed"), description: String(e), variant: "error" });
+    }
+  };
+
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
       <div className="flex items-center justify-between">
@@ -64,19 +97,27 @@ export function HistoryPage() {
             {t("h.recordedSplit", { ok: counts.completed, failed: counts.failed })}
           </p>
         </div>
-        {history.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              await api.clearHistory();
-              await refresh();
-              toast({ title: t("h.cleared"), variant: "default" });
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" /> {t("h.clearAll")}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => void backUp()}>
+            <Download className="h-3.5 w-3.5" /> {t("h.backup")}
           </Button>
-        )}
+          <Button variant="outline" size="sm" onClick={() => void importBackup()}>
+            <Upload className="h-3.5 w-3.5" /> {t("h.import")}
+          </Button>
+          {history.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await api.clearHistory();
+                await refresh();
+                toast({ title: t("h.cleared"), variant: "default" });
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> {t("h.clearAll")}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="relative">

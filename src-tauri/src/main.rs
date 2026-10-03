@@ -423,6 +423,18 @@ fn remove_history_entry(app: AppHandle, id: String) {
 }
 
 #[tauri::command]
+fn export_history(app: AppHandle, path: String) -> Result<usize, String> {
+    history::export(&app, &path)
+}
+
+#[tauri::command]
+fn import_history(app: AppHandle, path: String) -> Result<history::ImportReport, String> {
+    let report = history::import(&app, &path)?;
+    downloader::emit_history_replaced(&app);
+    Ok(report)
+}
+
+#[tauri::command]
 fn show_in_folder(path: String) -> Result<(), String> {
     tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| e.to_string())
 }
@@ -644,6 +656,8 @@ fn main() {
             get_history,
             clear_history,
             remove_history_entry,
+            export_history,
+            import_history,
             show_in_folder,
             open_file,
             open_external,

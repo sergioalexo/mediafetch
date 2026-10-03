@@ -284,6 +284,12 @@ export interface AppLogLine {
 
 // ---- History ----
 
+export interface ImportReport {
+  added: number;
+  skipped: number;
+  archiveAdded: number;
+}
+
 export interface HistoryEntry {
   id: string;
   url: string;
