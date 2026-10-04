@@ -181,6 +181,8 @@ export interface Settings {
   defaultPresetId: string;
   /** Per-service default preset overrides: service key -> preset id. */
   servicePresets: Record<string, string>;
+  /** Services whose pasted links queue automatically once analyzed: service key -> true. */
+  serviceAutoDownload: Record<string, boolean>;
   /** Ids of one-time settings migrations already applied (backend-owned). */
   migrations?: string[];
   /** The user confirmed the legal disclaimer on first launch. */

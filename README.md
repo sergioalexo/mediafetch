@@ -58,6 +58,7 @@ This software is provided "as is", without warranty of any kind, express or impl
 - Proxy support
 - Download speed limiting
 - Download archive (skip previously downloaded media)
+- Per-service auto-download: pasted links from chosen sites queue as soon as they are analyzed (already-downloaded media stays as a card); Ctrl+Shift+V pastes without auto-downloading
 - Metadata editing (title, artist, album, genre)
 - Thumbnail embedding
 

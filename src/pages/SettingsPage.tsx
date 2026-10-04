@@ -379,10 +379,11 @@ export function SettingsPage() {
           <div className="pt-3">
             <div className="text-sm font-medium">{t("set.servicePresets")}</div>
             <div className="text-xs text-muted-foreground">{t("set.servicePresetsHint")}</div>
+            <div className="text-xs text-muted-foreground">{t("set.autoDownloadHint")}</div>
             <div className="mt-2 grid grid-cols-1 gap-x-6 sm:grid-cols-2">
               {SERVICES.map((svc) => (
                 <div key={svc.key} className="flex items-center justify-between gap-2 py-1">
-                  <span className="text-sm">{svc.label}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{svc.label}</span>
                   <Select
                     value={settings.servicePresets?.[svc.key] ?? "default"}
                     onValueChange={(v) => {
@@ -406,6 +407,16 @@ export function SettingsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <Switch
+                    title={t("set.autoDownloadTip")}
+                    checked={!!settings.serviceAutoDownload?.[svc.key]}
+                    onCheckedChange={(v) => {
+                      const m = { ...(settings.serviceAutoDownload ?? {}) };
+                      if (v) m[svc.key] = true;
+                      else delete m[svc.key];
+                      set({ serviceAutoDownload: m });
+                    }}
+                  />
                 </div>
               ))}
             </div>

@@ -196,6 +196,8 @@ pub struct Settings {
     pub default_preset_id: String,
     // Per-service default preset overrides: service key -> preset id.
     pub service_presets: std::collections::HashMap<String, String>,
+    /// Per-service auto-download on paste: service key -> true. Absent = off.
+    pub service_auto_download: std::collections::HashMap<String, bool>,
     /// Ids of one-time settings migrations already applied.
     pub migrations: Vec<String>,
     // The user confirmed the legal disclaimer on first launch.
@@ -240,6 +242,7 @@ impl Default for Settings {
             presets: default_presets(),
             default_preset_id: "video-best".into(),
             service_presets: std::collections::HashMap::new(),
+            service_auto_download: std::collections::HashMap::new(),
             migrations: Vec::new(),
             disclaimer_accepted: false,
             onboarding_completed: false,

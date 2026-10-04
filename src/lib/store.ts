@@ -16,6 +16,7 @@ import type {
 import * as api from "./api";
 import { translate, type MsgKey } from "./i18n";
 import {
+  autoDownloadForUrl,
   isAlreadyDownloaded,
   isConvertibleHost,
   isFetchAll,
@@ -52,6 +53,8 @@ export interface Draft {
   selected: number[];
   collapsed: boolean;
   addedAt: number;
+  /** Queue this draft on its own as soon as analysis succeeds (per-service rule). */
+  autoDownload: boolean;
 }
 
 let draftSeq = 0;
@@ -95,7 +98,8 @@ interface AppState {
 
   // Workspace staging (session-only, cleared on app restart).
   drafts: Draft[];
-  addUrls: (text: string) => void;
+  /** `bypassAuto` stages links as plain drafts, ignoring the per-service auto-download rule. */
+  addUrls: (text: string, opts?: { bypassAuto?: boolean }) => void;
   setDraftPreset: (id: string, presetId: string) => void;
   toggleDraftEntry: (id: string, index: number) => void;
   setDraftEntriesAll: (id: string, selected: boolean) => void;
@@ -213,7 +217,7 @@ export const useApp = create<AppState>((set, get) => ({
   speedSamples: [],
 
   drafts: [],
-  addUrls: (text) => {
+  addUrls: (text, opts) => {
     const urls = extractUrls(text);
     const existing = new Set(get().drafts.map((d) => d.url));
     const s = get().settings;
@@ -238,6 +242,11 @@ export const useApp = create<AppState>((set, get) => ({
         selected: [],
         collapsed: false,
         addedAt: Date.now(),
+        // Unsupported links can never download, so the rule never applies.
+        autoDownload:
+          !opts?.bypassAuto &&
+          !isConvertibleHost(url) &&
+          autoDownloadForUrl(url, s?.serviceAutoDownload ?? {}),
       }));
     if (fresh.length === 0) return;
     // Newest links go on top so a fresh paste is always the first card.
@@ -597,6 +606,24 @@ async function runAnalyze(get: Get, set: SetState, id: string) {
         return { ...d, status: "ready" as const, result: r, selected };
       }),
     }));
+    // Per-service auto-download: queue it now, as the Download button would.
+    // Anything already downloaded (a video in history, or a playlist with no
+    // new tracks left) stays as a regular card showing its "downloaded" badge.
+    const done = get().drafts.find((d) => d.id === id);
+    const history = get().history;
+    const alreadyHave =
+      r.kind === "playlist"
+        ? (done?.selected.length ?? 0) === 0
+        : isAlreadyDownloaded(history, r.url, r.id) ||
+          isAlreadyDownloaded(history, draft.url);
+    if (done?.autoDownload && done.status === "ready" && !alreadyHave) {
+      const lang = get().settings?.language ?? "en";
+      get().toast({
+        title: translate(lang, "t.autoQueued", { title: r.title }),
+        variant: "default",
+      });
+      await get().downloadDraft(id);
+    }
   } catch (e) {
     set((s) => ({
       drafts: s.drafts.map((d) =>

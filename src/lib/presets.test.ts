@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { clampSampleRate, isAlreadyDownloaded, isConvertibleHost, presetSummary } from "./presets";
+import {
+  autoDownloadForUrl,
+  clampSampleRate,
+  isAlreadyDownloaded,
+  isConvertibleHost,
+  presetSummary,
+} from "./presets";
 import type { HistoryEntry, Preset } from "./types";
 import type { MsgKey } from "./i18n";
 
@@ -114,5 +120,21 @@ describe("isConvertibleHost", () => {
 
   it("returns false for a malformed URL", () => {
     expect(isConvertibleHost("not a url")).toBe(false);
+  });
+});
+
+describe("autoDownloadForUrl", () => {
+  it("is true only for a service switched on", () => {
+    const map = { youtube: true };
+    expect(autoDownloadForUrl("https://www.youtube.com/watch?v=x", map)).toBe(true);
+    expect(autoDownloadForUrl("https://soundcloud.com/a/b", map)).toBe(false);
+  });
+
+  it("is false when the map is empty", () => {
+    expect(autoDownloadForUrl("https://www.youtube.com/watch?v=x", {})).toBe(false);
+  });
+
+  it("is false for a site no service matches", () => {
+    expect(autoDownloadForUrl("https://example.com/video", { youtube: true })).toBe(false);
   });
 });

@@ -334,6 +334,15 @@ export function presetIdForUrl(
   return mapped && presetExists(mapped) ? mapped : defaultPresetId;
 }
 
+/** Whether a pasted URL's service has auto-download switched on. */
+export function autoDownloadForUrl(
+  url: string,
+  serviceAutoDownload: Record<string, boolean>
+): boolean {
+  const svc = detectService(url);
+  return svc ? !!serviceAutoDownload[svc.key] : false;
+}
+
 /** Best source audio bitrate (kbps) from an analysis, for CBR matching. */
 export function sourceAbrOf(result: AnalyzeResult | null | undefined): number | null {
   if (!result || result.kind !== "video") return null;

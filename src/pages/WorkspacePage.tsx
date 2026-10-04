@@ -72,17 +72,23 @@ export function WorkspacePage() {
   const activePresetId = settings?.defaultPresetId ?? "";
   const presets = settings?.presets ?? [];
 
-  const commit = (text: string) => {
+  // Set while Ctrl+Shift+V / Shift+Insert is held so the paste it triggers
+  // skips the per-service auto-download rule.
+  const bypassNextPaste = useRef(false);
+
+  const commit = (text: string, bypassAuto = false) => {
     if (extractUrls(text).length === 0) return;
-    addUrls(text);
+    addUrls(text, { bypassAuto });
     setInput("");
   };
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const bypass = bypassNextPaste.current;
+    bypassNextPaste.current = false;
     const text = e.clipboardData.getData("text");
     if (extractUrls(text).length > 0) {
       e.preventDefault();
-      commit(text);
+      commit(text, bypass);
     }
   };
 
@@ -265,7 +271,16 @@ export function WorkspacePage() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onPaste={onPaste}
+          onBlur={() => (bypassNextPaste.current = false)}
+          onKeyUp={() => (bypassNextPaste.current = false)}
+          title={t("dl.pasteTip")}
           onKeyDown={(e) => {
+            if (
+              ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "v") ||
+              (e.shiftKey && e.key === "Insert")
+            ) {
+              bypassNextPaste.current = true;
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               commit(input);
@@ -563,7 +578,12 @@ function DraftCard({ draft }: { draft: Draft }) {
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin text-primary" />
           <span className="truncate">{draft.url}</span>
-          <Badge variant="secondary" className="ml-auto shrink-0">
+          {draft.autoDownload && (
+            <Badge variant="outline" className="ml-auto shrink-0">
+              {t("ws.auto")}
+            </Badge>
+          )}
+          <Badge variant="secondary" className={cn("shrink-0", !draft.autoDownload && "ml-auto")}>
             {t("ws.analyzing")}
           </Badge>
         </div>
