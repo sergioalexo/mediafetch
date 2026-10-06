@@ -1,8 +1,8 @@
 # MediaFetch
 
-A cross-platform media download manager — a graphical interface for **yt-dlp** + **FFmpeg**, built with Tauri, React, TypeScript, Tailwind CSS, shadcn/ui and Framer Motion.
+A cross-platform media download manager — a graphical interface for **yt-dlp** + **FFmpeg**, built with Tauri, React, TypeScript, Tailwind CSS, shadcn/ui and Motion.
 
-![stack](https://img.shields.io/badge/Tauri-2-blue) ![stack](https://img.shields.io/badge/React-18-61dafb) ![stack](https://img.shields.io/badge/TypeScript-5-3178c6)
+![stack](https://img.shields.io/badge/Tauri-2-blue) ![stack](https://img.shields.io/badge/React-19-61dafb) ![stack](https://img.shields.io/badge/TypeScript-7-3178c6)
 
 ## Disclaimer
 
@@ -28,16 +28,14 @@ This software is provided "as is", without warranty of any kind, express or impl
 ## Features
 
 **Downloads**
-- Paste one or many URLs (one per line)
+- Paste one or many URLs (one per line, or however the source separated them)
 - Drag & drop URLs from the browser
-- Playlist and channel downloads with per-item selection
-- Single-video analysis with full format listing
+- Every link is analyzed first and staged as a card, downloaded with a **preset**: a named bundle of quality/format choices, with per-service defaults (e.g. YouTube Music → MP3 320)
+- Playlist and channel downloads with per-item selection; tracks already in your history are marked and left unticked
 
 **Video**
-- Resolution / FPS picker with HDR indicator
-- Codec labels (AV1, VP9, H.264, …)
-- Audio language selection for multi-audio videos
-- Subtitle selection (download and/or embed)
+- Quality presets: best available, or capped at 4K / 1440p / 1080p / 720p / 480p
+- Subtitles per preset (languages, embedded) or globally (download and/or embed)
 
 **Audio**
 - Extract audio to MP3, FLAC, WAV, AAC or OPUS at best available quality
@@ -59,14 +57,14 @@ This software is provided "as is", without warranty of any kind, express or impl
 - Download speed limiting
 - Download archive (skip previously downloaded media)
 - Per-service auto-download: pasted links from chosen sites queue as soon as they are analyzed (already-downloaded media stays as a card); Ctrl+Shift+V pastes without auto-downloading
-- Metadata editing (title, artist, album, genre)
-- Thumbnail embedding
+- Metadata and thumbnail embedding
+- Custom yt-dlp / FFmpeg arguments per preset, with a preview of the exact command line
 
 **Queue**
 - Pause / resume / retry / cancel / reorder
 - Configurable parallel downloads (1–8)
 - Display order: active downloads at the top, queued/paused/failed below, completed last (collapsible past 20)
-- Smooth with large playlists — the queue, history and playlist checklists virtualize past a few dozen rows
+- Smooth with large playlists — big playlist groups, the history, the log book and playlist checklists only render the rows in view
 
 **History**
 - Search, and filter by All / Downloaded / Failed, with a one-click Retry on failed entries
@@ -75,25 +73,32 @@ This software is provided "as is", without warranty of any kind, express or impl
 
 **Extras**
 - Statistics with live speed graph and ETA
+- Log book: every command run and every line the tools printed, copyable for bug reports
 - Native desktop notifications
 - Dark / light / auto theme, or a custom theme — create your own with a live-preview color editor, import/export as JSON, or pick one from the community gallery
 - First-run setup walks through installing components and picking defaults
 
 **Components** (`src-tauri/src/binaries.rs` + Components page)
-- Self-managed yt-dlp, FFmpeg, Deno and gallery-dl components
+- Self-managed yt-dlp, FFmpeg, Deno (the JavaScript runtime yt-dlp needs for YouTube) and gallery-dl components
 - Links to the official upstream GitHub repositories ([yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp), [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), [mikf/gallery-dl](https://github.com/mikf/gallery-dl) via its [standalone builds](https://github.com/gdl-org/builds), [denoland/deno](https://github.com/denoland/deno))
 - Installed version detection and latest-release checking
-- One-click installation and updates, with an optional auto-update-on-startup for every managed component
+- One-click installation and updates, with an optional auto-update-on-startup for every managed component, and a one-step rollback to the previous version
 
 ## Development
 
-Prerequisites: Node.js 18+, Rust (MSVC toolchain on Windows).
+Prerequisites: Node.js 22+ (Vite 8 needs 20.19 or newer; CI uses 24), Rust (MSVC toolchain on Windows).
 
 ```sh
 npm install
 npm run tauri dev     # run the app in dev mode
 npm run tauri build   # produce the installer
+npm test              # frontend unit tests (Vitest)
+cd src-tauri && cargo test   # backend unit tests
 ```
+
+The `@tauri-apps/*` npm packages are pinned to exactly the versions of the matching Rust crates in `src-tauri/Cargo.lock` — the release build fails when the two drift apart, so update them together.
+
+Tailwind CSS deliberately stays on 3.4: v4 requires Safari 16.4+, and on macOS the app renders in the system WebKit, so v4 would break styling on macOS 12 and older.
 
 On first launch, open the **Components** page and install yt-dlp and FFmpeg, or ensure both are available on your system PATH.
 
@@ -104,7 +109,7 @@ On first launch, open the **Components** page and install yt-dlp and FFmpeg, or 
 
 Versions are driven by git tags. To publish a release:
 
-1. Update the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `package.json` (keep them in sync).
+1. Update the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` (+ `Cargo.lock`) and `package.json` (+ `package-lock.json`) — keep them in sync.
 2. Commit the changes.
 3. Tag and push:
 
@@ -127,15 +132,24 @@ The application checks for new GitHub releases on startup and supports in-place 
 ## Architecture
 
 ```
-src/                  React frontend (Vite + Tailwind + shadcn/ui + Framer Motion)
-  pages/              Workspace, History, Statistics, Settings, Components
+src/                  React frontend (Vite + Tailwind + shadcn/ui + Motion)
+  pages/              Workspace, History, Statistics, Log book, Settings, Components
+  components/         queue rows, dialogs, theme editor; ui/ is vendored shadcn/ui
   lib/store.ts        zustand store, synced with backend events
+  lib/presets.ts      presets, per-service defaults, "already downloaded" index
+  lib/history.ts      history merge rule (mirrors history.rs)
+  lib/i18n.tsx        en / uk / ru dictionaries
 src-tauri/src/
-  downloader.rs       queue engine: spawns yt-dlp, parses progress, pause/resume
-  binaries.rs         component manager: version checks + updates from GitHub
-  metadata.rs         URL analysis (yt-dlp -J)
-  settings.rs         persisted settings
-  history.rs          download history
+  main.rs             Tauri commands and app setup
+  downloader.rs       queue engine: spawns yt-dlp / gallery-dl, parses progress,
+                      pause/resume, auto-retry, the log book
+  binaries.rs         component manager: version checks, installs, rollback
+  metadata.rs         URL analysis (yt-dlp -J, gallery-dl fallback)
+  cookies.rs          "Check cookies" diagnostics
+  history.rs          download history, backup and import
+  settings.rs         persisted settings and one-time migrations
+  themes.rs           custom and community themes, validated
+  notify.rs           native notifications
 ```
 
 ## License

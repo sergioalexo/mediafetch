@@ -818,6 +818,35 @@ mod tests {
         }
     }
 
+    fn install_crypto_provider() {
+        // What main() does first thing; reqwest is built without one.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
+    #[test]
+    fn the_http_client_builds_once_a_crypto_provider_is_installed() {
+        install_crypto_provider();
+        assert!(http_client("").is_ok());
+        assert!(http_client("socks5://127.0.0.1:1080").is_ok());
+        assert!(http_client("not a proxy url").is_err());
+    }
+
+    /// Real network: run with `cargo test -- --ignored` to check TLS (OS
+    /// root store via rustls-platform-verifier) and the release lookups end
+    /// to end against GitHub.
+    #[tokio::test]
+    #[ignore = "needs network access"]
+    async fn latest_releases_resolve_against_github() {
+        install_crypto_provider();
+        for c in &COMPONENTS {
+            let id = latest_build_id(c.name, "").await;
+            assert!(id.is_some(), "no latest release for {}", c.name);
+            if c.name == FFMPEG {
+                assert!(id.unwrap().starts_with("autobuild-"));
+            }
+        }
+    }
+
     #[test]
     fn ffmpeg_latest_resolves_to_its_dated_build() {
         let r = release("latest", Some("Latest Auto-Build (2026-10-06 13:06)"), None);
