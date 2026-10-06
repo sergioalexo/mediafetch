@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { HistoryEntry } from "@/lib/types";
 import {
@@ -20,6 +20,7 @@ import {
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
 import * as api from "@/lib/api";
+import { backUpHistory, importHistoryBackup } from "@/lib/historyBackup";
 import { cn, formatBytes, formatDate, formatEta, formatSpeed, hostname } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,39 +56,13 @@ export function HistoryPage() {
     });
   }, [history, query, statusFilter]);
 
-  const refresh = async () => {
-    const items = await api.getHistory();
-    useApp.setState({ history: items });
-  };
-
-  const backUp = async () => {
-    const date = new Date().toISOString().slice(0, 10);
-    const path = await save({
-      defaultPath: `mediafetch-history-${date}.mediafetch-history.json`,
-      filters: [{ name: "MediaFetch history", extensions: ["mediafetch-history.json", "json"] }],
-    });
-    if (!path) return;
-    const n = await api.exportHistory(path);
-    toast({ title: t("h.backedUp", { n }), variant: "default" });
-  };
-
-  const importBackup = async () => {
-    const path = await open({
-      multiple: false,
-      filters: [{ name: "MediaFetch history", extensions: ["mediafetch-history.json", "json"] }],
-    });
-    if (!path || Array.isArray(path)) return;
-    try {
-      const report = await api.importHistory(path);
-      await refresh();
-      toast({
-        title: t("h.imported", { n: report.added }),
-        description: t("h.importedSkipped", { n: report.skipped }),
-        variant: "default",
-      });
-    } catch (e) {
-      toast({ title: t("h.importFailed"), description: String(e), variant: "error" });
-    }
+  // History is the one record of what was downloaded; one stray click
+  // shouldn't be able to wipe it.
+  const clearAll = async () => {
+    if (!(await ask(t("h.clearConfirm"), { title: t("h.clearAll"), kind: "warning" }))) return;
+    await api.clearHistory();
+    useApp.setState({ history: [] });
+    toast({ title: t("h.cleared"), variant: "default" });
   };
 
   return (
@@ -100,22 +75,14 @@ export function HistoryPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => void backUp()}>
+          <Button variant="outline" size="sm" onClick={() => void backUpHistory()}>
             <Download className="h-3.5 w-3.5" /> {t("h.backup")}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void importBackup()}>
+          <Button variant="outline" size="sm" onClick={() => void importHistoryBackup()}>
             <Upload className="h-3.5 w-3.5" /> {t("h.import")}
           </Button>
           {history.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                await api.clearHistory();
-                await refresh();
-                toast({ title: t("h.cleared"), variant: "default" });
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={() => void clearAll()}>
               <Trash2 className="h-3.5 w-3.5" /> {t("h.clearAll")}
             </Button>
           )}
@@ -164,12 +131,7 @@ export function HistoryPage() {
           {history.length === 0 ? t("h.none") : t("h.noMatches")}
         </div>
       ) : (
-        <HistoryRows
-          entries={filtered}
-          retryHistoryEntry={retryHistoryEntry}
-          refresh={refresh}
-          toast={toast}
-        />
+        <HistoryRows entries={filtered} retryHistoryEntry={retryHistoryEntry} toast={toast} />
       )}
     </div>
   );
@@ -183,12 +145,10 @@ export function HistoryPage() {
 function HistoryRows({
   entries,
   retryHistoryEntry,
-  refresh,
   toast,
 }: {
   entries: HistoryEntry[];
   retryHistoryEntry: (h: HistoryEntry) => Promise<void>;
-  refresh: () => Promise<void>;
   toast: ReturnType<typeof useApp.getState>["toast"];
 }) {
   const ROW_HEIGHT = 68; // row + gap, measured from the non-virtualized layout
@@ -206,13 +166,7 @@ function HistoryRows({
     return (
       <div className="space-y-1.5">
         {entries.map((h) => (
-          <HistoryRow
-            key={h.id}
-            h={h}
-            retryHistoryEntry={retryHistoryEntry}
-            refresh={refresh}
-            toast={toast}
-          />
+          <HistoryRow key={h.id} h={h} retryHistoryEntry={retryHistoryEntry} toast={toast} />
         ))}
       </div>
     );
@@ -232,7 +186,6 @@ function HistoryRows({
             <HistoryRow
               h={entries[row.index]}
               retryHistoryEntry={retryHistoryEntry}
-              refresh={refresh}
               toast={toast}
             />
           </div>
@@ -245,16 +198,20 @@ function HistoryRows({
 function HistoryRow({
   h,
   retryHistoryEntry,
-  refresh,
   toast,
 }: {
   h: HistoryEntry;
   retryHistoryEntry: (h: HistoryEntry) => Promise<void>;
-  refresh: () => Promise<void>;
   toast: ReturnType<typeof useApp.getState>["toast"];
 }) {
   const t = useT();
   const host = hostname(h.url);
+  // The file may have been moved or deleted since; say so instead of
+  // leaving an unhandled rejection behind a button that did nothing.
+  const tryOpen = (action: () => Promise<void>) =>
+    action().catch((e) =>
+      toast({ title: t("q.openFailed"), description: String(e), variant: "error" })
+    );
   return (
     <div className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2.5">
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary">
@@ -316,7 +273,11 @@ function HistoryRow({
           <>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="iconSm" variant="ghost" onClick={() => api.openFile(h.filename!)}>
+                <Button
+                  size="iconSm"
+                  variant="ghost"
+                  onClick={() => void tryOpen(() => api.openFile(h.filename!))}
+                >
                   <Play className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
@@ -324,7 +285,11 @@ function HistoryRow({
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="iconSm" variant="ghost" onClick={() => api.showInFolder(h.filename!)}>
+                <Button
+                  size="iconSm"
+                  variant="ghost"
+                  onClick={() => void tryOpen(() => api.showInFolder(h.filename!))}
+                >
                   <FolderOpen className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
@@ -338,10 +303,12 @@ function HistoryRow({
               <Button
                 size="iconSm"
                 variant="ghost"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(h.url);
-                  toast({ title: t("h.urlCopied"), variant: "default" });
-                }}
+                onClick={() =>
+                  navigator.clipboard.writeText(h.url).then(
+                    () => toast({ title: t("h.urlCopied"), variant: "default" }),
+                    () => toast({ title: t("dl.clipboardUnavailable"), variant: "error" })
+                  )
+                }
               >
                 <Copy className="h-3.5 w-3.5" />
               </Button>
@@ -356,7 +323,9 @@ function HistoryRow({
               variant="ghost"
               onClick={async () => {
                 await api.removeHistoryEntry(h.id);
-                await refresh();
+                // Drop it locally — re-reading the whole history (possibly
+                // tens of thousands of entries) for one removal was wasteful.
+                useApp.setState((s) => ({ history: s.history.filter((e) => e.id !== h.id) }));
               }}
             >
               <Trash2 className="h-3.5 w-3.5" />

@@ -1,5 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   AudioLines,
   Bug,
@@ -27,7 +26,8 @@ import {
   Upload,
 } from "lucide-react";
 import type { CookieCheck, Preset, Settings } from "@/lib/types";
-import { useApp } from "@/lib/store";
+import { flushSettings, useApp } from "@/lib/store";
+import { backUpHistory, importHistoryBackup } from "@/lib/historyBackup";
 import { openIssueReport } from "@/lib/report";
 import { LANGUAGES, useT, type MsgKey } from "@/lib/i18n";
 import { presetSummary, SAMPLE_RATES, SERVICES } from "@/lib/presets";
@@ -99,6 +99,9 @@ function CookieTest() {
   const run = async () => {
     setBusy(true);
     try {
+      // The check reads the saved settings; make sure the source just picked
+      // above is among them.
+      await flushSettings();
       setResult(await api.testCookies());
     } catch (e) {
       setResult({
@@ -158,35 +161,6 @@ export function SettingsPage() {
   const [editPreset, setEditPreset] = useState<Preset | null>(null);
   const [presetDialog, setPresetDialog] = useState(false);
   const [tplGuide, setTplGuide] = useState(false);
-
-  const backUpHistory = async () => {
-    const date = new Date().toISOString().slice(0, 10);
-    const path = await save({
-      defaultPath: `mediafetch-history-${date}.mediafetch-history.json`,
-      filters: [{ name: "MediaFetch history", extensions: ["mediafetch-history.json", "json"] }],
-    });
-    if (!path) return;
-    const n = await api.exportHistory(path);
-    toast({ title: t("h.backedUp", { n }), variant: "default" });
-  };
-
-  const importHistoryBackup = async () => {
-    const path = await open({
-      multiple: false,
-      filters: [{ name: "MediaFetch history", extensions: ["mediafetch-history.json", "json"] }],
-    });
-    if (!path || Array.isArray(path)) return;
-    try {
-      const report = await api.importHistory(path);
-      toast({
-        title: t("h.imported", { n: report.added }),
-        description: t("h.importedSkipped", { n: report.skipped }),
-        variant: "default",
-      });
-    } catch (e) {
-      toast({ title: t("h.importFailed"), description: String(e), variant: "error" });
-    }
-  };
 
   if (!settings) return null;
   const set = (patch: Partial<Settings>) => void updateSettings(patch);
@@ -344,7 +318,9 @@ export function SettingsPage() {
                 <Film className="h-4 w-4 shrink-0 text-muted-foreground" />
               )}
               <span className="font-medium">{p.name}</span>
-              <span className="text-xs text-muted-foreground">{presetSummary(p, t)}</span>
+              <span className="text-xs text-muted-foreground">
+                {presetSummary(p, t, settings.audioSampleRate)}
+              </span>
               {settings.defaultPresetId === p.id && (
                 <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
                   {t("set.defaultPreset")}

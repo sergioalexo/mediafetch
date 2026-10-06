@@ -26,6 +26,7 @@ import {
   sourceAbrOf,
 } from "./presets";
 import { extractUrls } from "./utils";
+import { mergeHistoryEntry } from "./history";
 import { applyCustomTheme, customThemeId, type Theme } from "./theme";
 
 export type Page = "downloads" | "history" | "stats" | "logs" | "settings" | "binaries";
@@ -40,6 +41,9 @@ let logFlushTimer: ReturnType<typeof setTimeout> | null = null;
 // Incoming task-progress events are batched the same way (see "task-progress").
 const progressBuffer = new Map<string, DownloadTask>();
 let progressFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** A big playlist finishing fires one toast per item; only the newest few are worth the space. */
+const MAX_TOASTS = 4;
 
 /** A pasted link staged in the Workspace: analyzed but not yet downloading. */
 export interface Draft {
@@ -100,6 +104,8 @@ interface AppState {
   drafts: Draft[];
   /** `bypassAuto` stages links as plain drafts, ignoring the per-service auto-download rule. */
   addUrls: (text: string, opts?: { bypassAuto?: boolean }) => void;
+  /** Analyze a failed draft again. */
+  retryDraft: (id: string) => void;
   setDraftPreset: (id: string, presetId: string) => void;
   toggleDraftEntry: (id: string, index: number) => void;
   setDraftEntriesAll: (id: string, selected: boolean) => void;
@@ -160,10 +166,9 @@ export const useApp = create<AppState>((set, get) => ({
   updateSettings: async (patch) => {
     const cur = get().settings;
     if (!cur) return;
-    const next = { ...cur, ...patch };
-    set({ settings: next });
+    set({ settings: { ...cur, ...patch } });
     if (patch.theme !== undefined) applyTheme(patch.theme, get().customThemes);
-    await api.saveSettings(next);
+    await scheduleSettingsSave();
   },
 
   customThemes: [],
@@ -255,6 +260,14 @@ export const useApp = create<AppState>((set, get) => ({
       if (d.status === "analyzing") scheduleAnalyze(get, set, d.id);
     }
   },
+  retryDraft: (id) => {
+    set((s) => ({
+      drafts: s.drafts.map((d) =>
+        d.id === id ? { ...d, status: "analyzing" as const, error: null, result: null } : d
+      ),
+    }));
+    scheduleAnalyze(get, set, id);
+  },
   setDraftPreset: (id, presetId) =>
     set((s) => ({
       drafts: s.drafts.map((d) => (d.id === id ? { ...d, presetId } : d)),
@@ -305,7 +318,7 @@ export const useApp = create<AppState>((set, get) => ({
     const lang = s?.language ?? "en";
     const options = optionsFromPreset(
       preset,
-      { url: h.url, title: h.title },
+      { url: h.url, title: h.title, globalSampleRate: s?.audioSampleRate },
       (k) => translate(lang, k)
     );
     await enqueueReportingDuplicates(get, [options]);
@@ -380,7 +393,7 @@ export const useApp = create<AppState>((set, get) => ({
   toasts: [],
   toast: (t) => {
     const id = ++toastId;
-    set((s) => ({ toasts: [...s.toasts, { ...t, id }] }));
+    set((s) => ({ toasts: [...s.toasts, { ...t, id }].slice(-MAX_TOASTS) }));
     setTimeout(() => get().dismissToast(id), 5000);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
@@ -389,13 +402,16 @@ export const useApp = create<AppState>((set, get) => ({
     if (initialized) return;
     initialized = true;
 
-    await get().loadSettings();
-    const [queue, history] = await Promise.all([api.getQueue(), api.getHistory()]);
-    set({ queue, history });
-    void get().refreshBinaries(true);
-    void get().checkAppUpdate();
-
+    // Subscribe before loading any state, so nothing the backend emits while
+    // the initial fetches are in flight (a download finishing, the startup
+    // component-update pass) is lost. Each initial fetch returns the full
+    // current state, so whatever the listeners applied first is superseded.
     await listen<DownloadTask[]>("queue-changed", (e) => {
+      // A snapshot is newer than any progress still buffered from before it.
+      // Applied afterwards, that stale progress flipped a task the snapshot
+      // already shows as paused or completed back to "downloading" — and
+      // with no further events for it, it stayed that way.
+      progressBuffer.clear();
       set({ queue: e.payload });
     });
 
@@ -408,6 +424,7 @@ export const useApp = create<AppState>((set, get) => ({
       if (progressFlushTimer === null) {
         progressFlushTimer = setTimeout(() => {
           progressFlushTimer = null;
+          if (progressBuffer.size === 0) return;
           const updates = new Map(progressBuffer);
           progressBuffer.clear();
           set((s) => ({
@@ -418,7 +435,7 @@ export const useApp = create<AppState>((set, get) => ({
     });
 
     await listen<HistoryEntry>("history-added", (e) => {
-      set((s) => ({ history: [e.payload, ...s.history] }));
+      set((s) => ({ history: mergeHistoryEntry(s.history, e.payload) }));
       const entry = e.payload;
       const lang = get().settings?.language ?? "en";
       if (entry.status === "completed") {
@@ -442,9 +459,6 @@ export const useApp = create<AppState>((set, get) => ({
       set({ history: e.payload });
     });
 
-    // The log book streams in live; seed it with whatever was recorded before
-    // the window opened (the startup version line, mainly).
-    await get().loadAppLog();
     // Buffered: a verbose download emits hundreds of lines a second, and
     // appending one at a time rebuilt the whole 5000-line array — and
     // re-rendered the log page — for every one of them.
@@ -454,9 +468,14 @@ export const useApp = create<AppState>((set, get) => ({
         logFlushTimer = setTimeout(() => {
           logFlushTimer = null;
           const batch = logBuffer.splice(0, logBuffer.length);
-          if (batch.length > 0) {
-            set((s) => ({ appLog: [...s.appLog, ...batch].slice(-LOG_LIMIT) }));
-          }
+          if (batch.length === 0) return;
+          set((s) => {
+            // Lines can arrive both live and in the initial seed below; the
+            // sequence number says which ones are already here.
+            const lastSeq = s.appLog.length ? s.appLog[s.appLog.length - 1].seq : 0;
+            const fresh = batch.filter((l) => l.seq > lastSeq);
+            return fresh.length ? { appLog: [...s.appLog, ...fresh].slice(-LOG_LIMIT) } : {};
+          });
         }, 150);
       }
     });
@@ -485,6 +504,15 @@ export const useApp = create<AppState>((set, get) => ({
         variant: "default",
       });
     });
+
+    await get().loadSettings();
+    const [queue, history] = await Promise.all([api.getQueue(), api.getHistory()]);
+    set({ queue, history });
+    // The log book streams in live; seed it with whatever was recorded before
+    // the window opened (the startup version line, mainly).
+    await get().loadAppLog();
+    void get().refreshBinaries(true);
+    void get().checkAppUpdate();
 
     // Aggregate speed sampling for the live graph (keep last 120 samples ≈ 2 min).
     // Skipped entirely while nothing is downloading — an idle queue of 300
@@ -540,6 +568,52 @@ function applyTheme(theme: string, customThemes: Theme[]) {
   document.documentElement.classList.toggle("dark", theme === "dark");
 }
 
+// ---- Settings persistence ----
+
+// Text fields and sliders call updateSettings on every keystroke and drag
+// step. Saving each one rewrote the settings file and re-ran the queue pump on
+// the backend, so the save trails the last change by this long instead.
+const SETTINGS_SAVE_DELAY = 300;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saveDone: Promise<void> = Promise.resolve();
+let resolveSave: (() => void) | null = null;
+
+/** Persist the current settings shortly; resolves once they're on disk. */
+function scheduleSettingsSave(): Promise<void> {
+  if (saveTimer === null) {
+    saveDone = new Promise((resolve) => (resolveSave = resolve));
+  } else {
+    clearTimeout(saveTimer);
+  }
+  saveTimer = setTimeout(() => void flushSettings(), SETTINGS_SAVE_DELAY);
+  return saveDone;
+}
+
+/**
+ * Write any pending settings change now. Called before anything that makes
+ * the backend read its settings (queueing, analysis, the cookie check), so it
+ * never acts on the values from before the last edit.
+ */
+export async function flushSettings(): Promise<void> {
+  if (saveTimer === null) return saveDone;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const resolve = resolveSave;
+  resolveSave = null;
+  const { settings, toast } = useApp.getState();
+  try {
+    if (settings) await api.saveSettings(settings);
+  } catch (e) {
+    toast({
+      title: translate(settings?.language ?? "en", "set.saveFailed"),
+      description: String(e),
+      variant: "error",
+    });
+  } finally {
+    resolve?.();
+  }
+}
+
 // ---- Draft analysis (concurrency-limited) & item building ----
 
 type Get = () => AppState;
@@ -576,6 +650,7 @@ function pumpAnalyze(get: Get, set: SetState) {
  * shorter queue than the button promised is worse than a one-line toast.
  */
 async function enqueueReportingDuplicates(get: Get, items: DownloadOptions[]) {
+  await flushSettings();
   const skipped = await api.enqueue(items);
   if (!skipped) return;
   const lang = get().settings?.language ?? "en";
@@ -590,6 +665,7 @@ async function runAnalyze(get: Get, set: SetState, id: string) {
   const draft = get().drafts.find((d) => d.id === id);
   if (!draft) return;
   try {
+    await flushSettings();
     const r = await api.analyzeUrl(draft.url);
     set((s) => ({
       drafts: s.drafts.map((d) => {
@@ -686,6 +762,7 @@ export function buildDraftItems(get: Get, draft: Draft): DownloadOptions[] {
   const t = (k: MsgKey) => translate(lang, k);
   const r = draft.result;
   const { engine, oneTask, taskCount } = draftPlan(get, draft);
+  const globalSampleRate = s.audioSampleRate;
 
   if (oneTask) {
     if (taskCount === 0) return [];
@@ -708,6 +785,7 @@ export function buildDraftItems(get: Get, draft: Draft): DownloadOptions[] {
           // gallery-dl reports no totals, so give it the count when we know it.
           expectedItems:
             r.kind === "playlist" ? (all ? r.entries.length : draft.selected.length) : null,
+          globalSampleRate,
         },
         t
       ),
@@ -723,7 +801,14 @@ export function buildDraftItems(get: Get, draft: Draft): DownloadOptions[] {
       .map((e) =>
         optionsFromPreset(
           preset,
-          { url: e.url, title: e.title, thumbnail: e.thumbnail, groupId, groupTitle: r.title },
+          {
+            url: e.url,
+            title: e.title,
+            thumbnail: e.thumbnail,
+            groupId,
+            groupTitle: r.title,
+            globalSampleRate,
+          },
           t
         )
       );
@@ -731,7 +816,13 @@ export function buildDraftItems(get: Get, draft: Draft): DownloadOptions[] {
   return [
     optionsFromPreset(
       preset,
-      { url: r.url, title: r.title, thumbnail: r.thumbnail, sourceAbr: sourceAbrOf(r) },
+      {
+        url: r.url,
+        title: r.title,
+        thumbnail: r.thumbnail,
+        sourceAbr: sourceAbrOf(r),
+        globalSampleRate,
+      },
       t
     ),
   ];

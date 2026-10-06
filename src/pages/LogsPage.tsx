@@ -4,6 +4,7 @@
 // and copied into a bug report.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDownToLine, Copy, Search, Terminal, Trash2, X } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
@@ -48,6 +49,16 @@ export function LogsPage() {
       return l.line.toLowerCase().includes(q) || l.scope.toLowerCase().includes(q);
     });
   }, [logs, filter, query]);
+
+  // Up to 5000 lines, appended several times a second during a download:
+  // only the ones in view are mounted. Lines wrap, so each is measured.
+  const virtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => boxRef.current,
+    estimateSize: () => 18,
+    overscan: 20,
+    getItemKey: (i) => visible[i].seq,
+  });
 
   // Keep the newest line in view while following, the way a terminal does.
   useEffect(() => {
@@ -143,28 +154,41 @@ export function LogsPage() {
             <span className="text-xs">{t("book.empty")}</span>
           </div>
         ) : (
-          visible.map((l) => (
-            <div key={l.seq} className="flex gap-2 whitespace-pre-wrap break-all">
-              <span className="shrink-0 select-none text-muted-foreground/60">{clock(l.ts)}</span>
-              <span
-                className="w-32 shrink-0 select-none truncate text-muted-foreground/60"
-                title={l.scope}
-              >
-                {l.scope}
-              </span>
-              <span
-                className={cn(
-                  isError(l)
-                    ? "text-destructive"
-                    : l.line.startsWith("$")
-                      ? "text-primary"
-                      : "text-foreground/80"
-                )}
-              >
-                {l.line}
-              </span>
-            </div>
-          ))
+          <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+            {virtualizer.getVirtualItems().map((row) => {
+              const l = visible[row.index];
+              return (
+                <div
+                  key={row.key}
+                  data-index={row.index}
+                  ref={virtualizer.measureElement}
+                  className="absolute left-0 top-0 flex w-full gap-2 whitespace-pre-wrap break-all"
+                  style={{ transform: `translateY(${row.start}px)` }}
+                >
+                  <span className="shrink-0 select-none text-muted-foreground/60">
+                    {clock(l.ts)}
+                  </span>
+                  <span
+                    className="w-32 shrink-0 select-none truncate text-muted-foreground/60"
+                    title={l.scope}
+                  >
+                    {l.scope}
+                  </span>
+                  <span
+                    className={cn(
+                      isError(l)
+                        ? "text-destructive"
+                        : l.line.startsWith("$")
+                          ? "text-primary"
+                          : "text-foreground/80"
+                    )}
+                  >
+                    {l.line}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

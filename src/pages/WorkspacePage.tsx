@@ -1,4 +1,12 @@
-import { memo, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type DragEvent,
+} from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -45,7 +53,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { QueueItem } from "@/components/QueueItem";
+import { QueueItem, type QueueDragHandlers } from "@/components/QueueItem";
 import { PresetDialog } from "@/components/PresetDialog";
 import { CommandPreviewDialog } from "@/components/CommandPreviewDialog";
 import * as api from "@/lib/api";
@@ -193,10 +201,40 @@ export function WorkspacePage() {
     }
   };
 
-  const reorderableId = (row: (typeof rendered)[number]): string | null =>
-    row.type === "single" && row.task && row.task.status !== "downloading" && !["completed", "failed", "cancelled"].includes(row.task.status)
-      ? row.task.id
-      : null;
+  // Drag-to-reorder handlers, created once so QueueItem's memo holds: new
+  // closures per render re-rendered every row on every progress tick. They
+  // read the latest drag source and queue positions through refs.
+  const dragFrom = useRef<string | null>(null);
+  const idIndexRef = useRef(idIndex);
+  useEffect(() => {
+    idIndexRef.current = idIndex;
+  }, [idIndex]);
+  const drag = useMemo<QueueDragHandlers>(
+    () => ({
+      start: (id) => {
+        dragFrom.current = id;
+        setDragTaskId(id);
+      },
+      drop: (targetId) => {
+        const from = dragFrom.current;
+        if (from && from !== targetId) {
+          void api.reorderTask(from, idIndexRef.current.get(targetId) ?? 0);
+        }
+        dragFrom.current = null;
+        setDragTaskId(null);
+      },
+      end: () => {
+        dragFrom.current = null;
+        setDragTaskId(null);
+      },
+    }),
+    []
+  );
+
+  // Only waiting work can be reordered; what's running or done has no
+  // position left to change.
+  const reorderable = (task: DownloadTask) =>
+    task.status === "queued" || task.status === "paused";
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">
@@ -224,7 +262,9 @@ export function WorkspacePage() {
                     <Film className="h-3.5 w-3.5" />
                   )}
                   <span className="font-medium">{p.name}</span>
-                  <span className="text-xs text-muted-foreground">{presetSummary(p, t)}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {presetSummary(p, t, settings?.audioSampleRate)}
+                  </span>
                 </span>
               </SelectItem>
             ))}
@@ -408,9 +448,8 @@ export function WorkspacePage() {
             const doneRows = filteredRendered.filter((r) => rowRank(r) === 4);
             const collapsed = completedCollapsed ?? doneRows.length > 20;
 
-            const renderRow = (row: (typeof filteredRendered)[number]) => {
-              const dragId = reorderableId(row);
-              return row.type === "group" ? (
+            const renderRow = (row: (typeof filteredRendered)[number]) =>
+              row.type === "group" ? (
                 <TaskGroup
                   key={row.groupId}
                   tasks={groupsMap.get(row.groupId!) ?? []}
@@ -423,28 +462,14 @@ export function WorkspacePage() {
                   task={row.task!}
                   index={idIndex.get(row.task!.id) ?? 0}
                   count={queue.length}
+                  // Top-level rows are shown newest first — the reverse of
+                  // queue order — so "up" means later in the queue.
+                  reversed
                   compact
-                  dragProps={
-                    dragId
-                      ? {
-                          draggable: true,
-                          onDragStart: () => setDragTaskId(dragId),
-                          onDragOver: (e) => e.preventDefault(),
-                          onDrop: (e) => {
-                            e.preventDefault();
-                            if (dragTaskId && dragTaskId !== dragId) {
-                              void api.reorderTask(dragTaskId, idIndex.get(dragId) ?? 0);
-                            }
-                            setDragTaskId(null);
-                          },
-                          onDragEnd: () => setDragTaskId(null),
-                          dragging: dragTaskId === dragId,
-                        }
-                      : undefined
-                  }
+                  drag={reorderable(row.task!) ? drag : undefined}
+                  dragging={dragTaskId === row.task!.id}
                 />
               );
-            };
 
             return (
               <>
@@ -508,7 +533,7 @@ function DraftCard({ draft }: { draft: Draft }) {
   const toggleCollapsed = useApp((s) => s.toggleDraftCollapsed);
   const removeDraft = useApp((s) => s.removeDraft);
   const downloadDraft = useApp((s) => s.downloadDraft);
-  const addUrls = useApp((s) => s.addUrls);
+  const retryDraft = useApp((s) => s.retryDraft);
   const t = useT();
   const [previewOptions, setPreviewOptions] = useState<DownloadOptions | null>(null);
   const entriesScrollRef = useRef<HTMLDivElement>(null);
@@ -543,12 +568,14 @@ function DraftCard({ draft }: { draft: Draft }) {
         title: draft.result.title,
         thumbnail: draft.result.thumbnail,
         sourceAbr: sourceAbrOf(draft.result),
+        globalSampleRate: settings.audioSampleRate,
       },
       t
     );
     void useApp.getState().enqueueItems([opts]);
     removeDraft(draft.id);
   };
+
 
   const presetPicker = (
     <Select value={draft.presetId} onValueChange={(v) => setDraftPreset(draft.id, v)}>
@@ -619,7 +646,7 @@ function DraftCard({ draft }: { draft: Draft }) {
             <Badge variant="destructive" className="shrink-0">
               {t("ws.errorStatus")}
             </Badge>
-            <Button variant="ghost" size="sm" onClick={() => addUrls(draft.url)}>
+            <Button variant="ghost" size="sm" onClick={() => retryDraft(draft.id)}>
               {t("ws.retryAnalyze")}
             </Button>
             <Button variant="ghost" size="iconSm" onClick={() => removeDraft(draft.id)}>
@@ -779,7 +806,7 @@ function DraftCard({ draft }: { draft: Draft }) {
                     const i = row.index;
                     return (
                       <label
-                        key={entry.id + i}
+                        key={`${entry.id}-${i}`}
                         className="absolute left-0 top-0 flex w-full cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-accent"
                         style={{ height: row.size, transform: `translateY(${row.start}px)` }}
                       >
@@ -816,6 +843,9 @@ function DraftCard({ draft }: { draft: Draft }) {
   );
 }
 
+/** Past this many tracks a group's rows render virtualized in their own scroll box. */
+const VIRTUALIZE_GROUP_AT = 40;
+
 /** A collapsible header for downloaded/queued tasks that share a playlist. */
 const TaskGroup = memo(function TaskGroup({
   tasks,
@@ -851,19 +881,72 @@ const TaskGroup = memo(function TaskGroup({
           {done}/{tasks.length}
         </Badge>
       </button>
-      {!collapsed && (
-        <div className="mt-1 space-y-1.5 pl-2">
-          {tasks.map((task) => (
-            <QueueItem
-              key={task.id}
-              task={task}
-              index={idIndex.get(task.id) ?? 0}
-              count={queueLength}
-              compact
-            />
-          ))}
-        </div>
-      )}
+      {!collapsed &&
+        (tasks.length > VIRTUALIZE_GROUP_AT ? (
+          <VirtualGroupRows tasks={tasks} idIndex={idIndex} queueLength={queueLength} />
+        ) : (
+          <div className="mt-1 space-y-1.5 pl-2">
+            {tasks.map((task) => (
+              <QueueItem
+                key={task.id}
+                task={task}
+                index={idIndex.get(task.id) ?? 0}
+                count={queueLength}
+                compact
+              />
+            ))}
+          </div>
+        ))}
     </div>
   );
 });
+
+/**
+ * A big playlist's rows, only the visible ones mounted. Rows differ in height
+ * (a progress bar while active, an error line once failed), so each one is
+ * measured as it renders rather than assumed.
+ */
+function VirtualGroupRows({
+  tasks,
+  idIndex,
+  queueLength,
+}: {
+  tasks: DownloadTask[];
+  idIndex: Map<string, number>;
+  queueLength: number;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: tasks.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 74,
+    overscan: 6,
+    getItemKey: (i) => tasks[i].id,
+  });
+
+  return (
+    <div ref={scrollRef} className="mt-1 max-h-[60vh] overflow-y-auto pl-2 pr-1">
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+        {virtualizer.getVirtualItems().map((row) => {
+          const task = tasks[row.index];
+          return (
+            <div
+              key={row.key}
+              data-index={row.index}
+              ref={virtualizer.measureElement}
+              className="absolute left-0 top-0 w-full pb-1.5"
+              style={{ transform: `translateY(${row.start}px)` }}
+            >
+              <QueueItem
+                task={task}
+                index={idIndex.get(task.id) ?? 0}
+                count={queueLength}
+                compact
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

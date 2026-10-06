@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import { Check, ExternalLink, Palette, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import type { Theme } from "@/lib/theme";
 import { useApp } from "@/lib/store";
@@ -144,19 +144,41 @@ export function ThemeSection() {
       filters: [{ name: "Theme", extensions: ["json"] }],
     });
     if (!path) return;
-    await exportCustomTheme(theme.id, path);
-    toast({ title: t("th.exported"), variant: "default" });
+    try {
+      await exportCustomTheme(theme.id, path);
+      toast({ title: t("th.exported"), variant: "default" });
+    } catch (e) {
+      toast({ title: t("th.exportFailed"), description: String(e), variant: "error" });
+    }
+  };
+
+  const remove = async (theme: Theme) => {
+    if (!(await ask(t("th.deleteConfirm"), { title: theme.name, kind: "warning" }))) return;
+    await deleteCustomTheme(theme.id);
   };
 
   const share = async (theme: Theme) => {
     const url = shareUrl(theme);
     if (url.length > 8000) {
-      await navigator.clipboard.writeText(JSON.stringify(theme, null, 2));
-      toast({ title: t("th.shareTooBig"), variant: "default" });
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(theme, null, 2));
+        toast({ title: t("th.shareTooBig"), variant: "default" });
+      } catch {
+        toast({ title: t("dl.clipboardUnavailable"), variant: "error" });
+      }
       await api.openExternal("https://github.com/sergioalexo/mediafetch/tree/main/themes");
       return;
     }
     await api.openExternal(url);
+  };
+
+  const applyCommunity = async (theme: Theme) => {
+    try {
+      await useApp.getState().saveCustomTheme(theme);
+      applyCustom(theme.id);
+    } catch (e) {
+      toast({ title: t("th.saveFailed"), description: String(e), variant: "error" });
+    }
   };
 
   return (
@@ -220,7 +242,7 @@ export function ThemeSection() {
                 }}
                 onExport={() => void exportFile(th)}
                 onShare={() => void share(th)}
-                onDelete={() => void deleteCustomTheme(th.id)}
+                onDelete={() => void remove(th)}
               />
             ))}
           </div>
@@ -255,10 +277,7 @@ export function ThemeSection() {
                   primary: th.colors.primary ?? "0 0% 50%",
                 }}
                 selected={current === `custom:${th.id}`}
-                onSelect={async () => {
-                  await useApp.getState().saveCustomTheme(th);
-                  applyCustom(th.id);
-                }}
+                onSelect={() => void applyCommunity(th)}
               />
             ))}
           </div>

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import type { Theme, ThemeColorKey } from "@/lib/theme";
-import { applyCustomTheme, hexToHsl, hslToHex, THEME_COLOR_KEYS } from "@/lib/theme";
+import {
+  applyCustomTheme,
+  hexToHsl,
+  hslToHex,
+  THEME_COLOR_KEYS,
+  validateTheme,
+} from "@/lib/theme";
 import { useApp } from "@/lib/store";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -49,6 +55,7 @@ export function ThemeEditorDialog({
   const settings = useApp((s) => s.settings);
   const saveCustomTheme = useApp((s) => s.saveCustomTheme);
   const customThemes = useApp((s) => s.customThemes);
+  const toast = useApp((s) => s.toast);
   const t = useT();
   const [draft, setDraft] = useState<Theme>(() => blankTheme("dark"));
   const previousApplied = useRef<string>(settings?.theme ?? "auto");
@@ -98,9 +105,18 @@ export function ThemeEditorDialog({
   const save = async () => {
     const name = draft.name.trim();
     if (!name) return;
-    const toSave: Theme = { ...draft, name };
-    await saveCustomTheme(toSave);
-    onOpenChange(false);
+    // An empty radius means "the default", not an invalid value.
+    const checked = validateTheme({ ...draft, name, radius: draft.radius?.trim() || null });
+    if (!checked.ok) {
+      toast({ title: t("th.saveFailed"), description: checked.error, variant: "error" });
+      return;
+    }
+    try {
+      await saveCustomTheme(checked.theme);
+      onOpenChange(false);
+    } catch (e) {
+      toast({ title: t("th.saveFailed"), description: String(e), variant: "error" });
+    }
   };
 
   return (

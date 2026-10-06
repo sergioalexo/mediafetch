@@ -160,7 +160,14 @@ export function buildDownloadedIndex(history: HistoryEntry[]): DownloadedIndex {
   const ids = new Set<string>();
   for (const h of history) {
     if (h.status !== "completed") continue;
-    if (h.mediaKey) keys.add(h.mediaKey);
+    if (h.mediaKey) {
+      keys.add(h.mediaKey);
+      // "Youtube:dQw4w9WgXcQ" -> also the bare id, which is what a playlist
+      // entry from analysis carries (SoundCloud's numeric track id included,
+      // which no URL of ours contains).
+      const sep = h.mediaKey.indexOf(":");
+      if (sep > 0) ids.add(h.mediaKey.slice(sep + 1));
+    }
     urls.add(normalizeUrl(h.url));
     const id = extractMediaId(h.url);
     if (id) ids.add(id);

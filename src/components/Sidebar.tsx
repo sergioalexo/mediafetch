@@ -27,14 +27,18 @@ const NAV: { page: Page; label: MsgKey; icon: typeof Download }[] = [
 export function Sidebar() {
   const page = useApp((s) => s.page);
   const setPage = useApp((s) => s.setPage);
-  const queue = useApp((s) => s.queue);
+  // A count, not the queue itself: selecting the whole queue re-rendered the
+  // sidebar on every progress update of every download.
+  const activeCount = useApp(
+    (s) =>
+      s.queue.filter(
+        (t) => t.status === "downloading" || t.status === "queued" || t.status === "postprocessing"
+      ).length
+  );
   const binaries = useApp((s) => s.binaries);
   const appUpdate = useApp((s) => s.appUpdate);
   const t = useT();
 
-  const activeCount = queue.filter(
-    (t) => t.status === "downloading" || t.status === "queued" || t.status === "postprocessing"
-  ).length;
   const updatesAvailable =
     binaries.filter((b) => b.updateAvailable || !b.installed).length +
     (appUpdate?.updateAvailable ? 1 : 0);

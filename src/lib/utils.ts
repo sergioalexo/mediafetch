@@ -164,14 +164,3 @@ export function normalizeUrl(url: string): string {
     return url.trim().toLowerCase();
   }
 }
-
-export function codecLabel(vcodec?: string | null): string {
-  if (!vcodec || vcodec === "none") return "";
-  const c = vcodec.toLowerCase();
-  if (c.startsWith("av01")) return "AV1";
-  if (c.startsWith("vp9") || c.startsWith("vp09")) return "VP9";
-  if (c.startsWith("avc1") || c.startsWith("h264")) return "H.264";
-  if (c.startsWith("hev1") || c.startsWith("hvc1") || c.startsWith("h265")) return "H.265";
-  if (c.startsWith("vp8")) return "VP8";
-  return vcodec.split(".")[0].toUpperCase();
-}

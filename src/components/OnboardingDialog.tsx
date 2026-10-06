@@ -12,7 +12,7 @@ import {
 import { useApp } from "@/lib/store";
 import { useT, type MsgKey } from "@/lib/i18n";
 import * as api from "@/lib/api";
-import { presetSummary, TUNEMYMUSIC_URL } from "@/lib/presets";
+import { presetSummary, sampleRateLabel, TUNEMYMUSIC_URL } from "@/lib/presets";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -30,6 +30,7 @@ const STEPS: Step[] = ["hello", "intro", "disclaimer", "components", "defaults",
 /** Install order matters here: Deno before yt-dlp would be backwards, but
  * yt-dlp works (just without JS-challenge support) if Deno fails, so the
  * sequence is least-to-most optional. */
+const IS_MAC = navigator.userAgent.includes("Mac");
 const COMPONENTS: { name: string; purpose: MsgKey }[] = [
   { name: "yt-dlp", purpose: "c.purpose.ytdlp" },
   { name: "ffmpeg", purpose: "c.purpose.ffmpeg" },
@@ -71,7 +72,9 @@ export function OnboardingDialog() {
     const failed = new Set<string>();
     for (const c of COMPONENTS) {
       const already = binaries.find((b) => b.name === c.name)?.installed;
-      if (already) continue;
+      // No upstream macOS FFmpeg build exists to install — it comes from
+      // Homebrew, which the row below explains instead of a failed install.
+      if (already || (IS_MAC && c.name === "ffmpeg")) continue;
       try {
         await api.installBinary(c.name);
       } catch {
@@ -101,7 +104,7 @@ export function OnboardingDialog() {
 
   const allDone = COMPONENTS.every((c) => {
     const bin = binaries.find((b) => b.name === c.name);
-    return bin?.installed || failedComponents.has(c.name);
+    return bin?.installed || failedComponents.has(c.name) || (IS_MAC && c.name === "ffmpeg");
   });
 
   const audioPreset =
@@ -230,6 +233,15 @@ export function OnboardingDialog() {
                       )}
                     </div>
                     <p className="mt-1 text-[11px] text-muted-foreground">{t(c.purpose)}</p>
+                    {IS_MAC && c.name === "ffmpeg" && !bin?.installed && (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {t("c.homebrew1")}{" "}
+                        <code className="select-text font-mono text-foreground">
+                          brew install ffmpeg
+                        </code>{" "}
+                        {t("c.homebrew2")}
+                      </p>
+                    )}
                     {active && (
                       <Progress
                         value={
@@ -297,12 +309,14 @@ export function OnboardingDialog() {
               {audioPreset && (
                 <div className="flex items-center justify-between rounded-lg border p-2.5 text-sm">
                   <span className="text-muted-foreground">{t("ob.audioDefault")}</span>
-                  <span className="font-medium">{presetSummary(audioPreset, t)}</span>
+                  <span className="font-medium">
+                    {presetSummary(audioPreset, t, settings.audioSampleRate)}
+                  </span>
                 </div>
               )}
               <div className="flex items-center justify-between rounded-lg border p-2.5 text-sm">
                 <span className="text-muted-foreground">{t("set.sampleRate")}</span>
-                <span className="font-medium">{settings.audioSampleRate === "48000" ? "48 kHz" : settings.audioSampleRate}</span>
+                <span className="font-medium">{sampleRateLabel(settings.audioSampleRate, t)}</span>
               </div>
             </div>
             <DialogFooter className="justify-end">

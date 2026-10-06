@@ -1,4 +1,4 @@
-import { memo, useState, type DragEvent, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { DownloadTask } from "@/lib/types";
 import * as api from "@/lib/api";
+import { useApp } from "@/lib/store";
 import { openIssueReport } from "@/lib/report";
 import { useT, type MsgKey } from "@/lib/i18n";
 import { cn, formatBytes, formatEta, formatSpeed } from "@/lib/utils";
@@ -73,32 +74,53 @@ function IconButton({
   );
 }
 
+/**
+ * Native HTML5 drag-and-drop for manual queue reordering, keyed by task id.
+ * The parent creates these once, so passing them doesn't defeat the memo.
+ */
+export interface QueueDragHandlers {
+  start: (id: string) => void;
+  drop: (targetId: string) => void;
+  end: () => void;
+}
+
+/** Run a row action, turning a rejection (file moved, clipboard blocked) into a toast. */
+function attempt(action: () => Promise<unknown>, failedTitle: string) {
+  action().catch((e) =>
+    useApp.getState().toast({ title: failedTitle, description: String(e), variant: "error" })
+  );
+}
+
 export const QueueItem = memo(function QueueItem({
   task,
   index,
   count,
+  reversed = false,
   compact = false,
-  dragProps,
+  drag,
+  dragging = false,
 }: {
   task: DownloadTask;
+  /** Position in the backend queue — the order downloads start in. */
   index: number;
   count: number;
+  /** Displayed in reverse queue order (newest first), so "up" is later in the queue. */
+  reversed?: boolean;
   compact?: boolean;
-  /** Native HTML5 drag-and-drop handlers for manual queue reordering. */
-  dragProps?: {
-    draggable?: boolean;
-    onDragStart?: () => void;
-    onDragOver?: (e: DragEvent<HTMLDivElement>) => void;
-    onDrop?: (e: DragEvent<HTMLDivElement>) => void;
-    onDragEnd?: () => void;
-    dragging?: boolean;
-  };
+  /** Present when this row can be dragged to a new position. */
+  drag?: QueueDragHandlers;
+  dragging?: boolean;
 }) {
   const t = useT();
   const [showLog, setShowLog] = useState(false);
   const active = task.status === "downloading" || task.status === "postprocessing";
   const finished =
     task.status === "completed" || task.status === "failed" || task.status === "cancelled";
+  // Only waiting work has a position worth changing.
+  const movable = task.status === "queued" || task.status === "paused";
+  const upIndex = reversed ? index + 1 : index - 1;
+  const downIndex = reversed ? index - 1 : index + 1;
+  const inQueue = (i: number) => i >= 0 && i < count;
 
   return (
     <div
@@ -106,16 +128,22 @@ export const QueueItem = memo(function QueueItem({
       // the previous version ran a spring on every one of 300 rows on every
       // reorder/status change. Framer Motion stays for page transitions and
       // dialogs, where there's one of them, not hundreds.
-      draggable={dragProps?.draggable}
-      onDragStart={dragProps?.onDragStart}
-      onDragOver={dragProps?.onDragOver}
-      onDrop={dragProps?.onDrop}
-      onDragEnd={dragProps?.onDragEnd}
+      draggable={!!drag}
+      onDragStart={drag && (() => drag.start(task.id))}
+      onDragOver={drag && ((e) => e.preventDefault())}
+      onDrop={
+        drag &&
+        ((e) => {
+          e.preventDefault();
+          drag.drop(task.id);
+        })
+      }
+      onDragEnd={drag?.end}
       className={cn(
         "queue-row-in rounded-xl border bg-card shadow-sm",
         compact ? "p-2" : "p-3",
         active && "border-primary/30",
-        dragProps?.dragging && "opacity-50"
+        dragging && "opacity-50"
       )}
     >
       <div className={cn("flex", compact ? "gap-2.5" : "gap-3")}>
@@ -171,15 +199,15 @@ export const QueueItem = memo(function QueueItem({
               <IconButton tip={t("q.viewLog")} onClick={() => setShowLog(true)}>
                 <Terminal className="h-3.5 w-3.5" />
               </IconButton>
-              {index > 0 && !finished && task.status !== "downloading" && (
-                <IconButton tip={t("q.moveUp")} onClick={() => api.reorderTask(task.id, index - 1)}>
+              {movable && inQueue(upIndex) && (
+                <IconButton tip={t("q.moveUp")} onClick={() => api.reorderTask(task.id, upIndex)}>
                   <ArrowUp className="h-3.5 w-3.5" />
                 </IconButton>
               )}
-              {index < count - 1 && !finished && task.status !== "downloading" && (
+              {movable && inQueue(downIndex) && (
                 <IconButton
                   tip={t("q.moveDown")}
-                  onClick={() => api.reorderTask(task.id, index + 1)}
+                  onClick={() => api.reorderTask(task.id, downIndex)}
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
                 </IconButton>
@@ -215,7 +243,7 @@ export const QueueItem = memo(function QueueItem({
               {task.status === "completed" && task.filename && (
                 <IconButton
                   tip={t("q.showInFolder")}
-                  onClick={() => api.showInFolder(task.filename!)}
+                  onClick={() => attempt(() => api.showInFolder(task.filename!), t("q.openFailed"))}
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
                 </IconButton>
@@ -276,7 +304,12 @@ export const QueueItem = memo(function QueueItem({
                 type="button"
                 className="shrink-0 opacity-70 hover:opacity-100"
                 title={t("q.copyError")}
-                onClick={() => void navigator.clipboard.writeText(task.error ?? "")}
+                onClick={() =>
+                  attempt(
+                    () => navigator.clipboard.writeText(task.error ?? ""),
+                    t("dl.clipboardUnavailable")
+                  )
+                }
               >
                 <Copy className="h-3 w-3" />
               </button>

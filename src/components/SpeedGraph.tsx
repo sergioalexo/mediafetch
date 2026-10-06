@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useT } from "@/lib/i18n";
 import { formatSpeed } from "@/lib/utils";
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
 
 /** Lightweight SVG area chart of download speed over time. */
 export function SpeedGraph({ samples, height = 120, className }: Props) {
+  const t = useT();
   const { path, area, max } = useMemo(() => {
     const w = 100; // viewBox units, stretched by CSS
     const h = 100;
@@ -30,9 +32,11 @@ export function SpeedGraph({ samples, height = 120, className }: Props) {
   return (
     <div className={className}>
       <div className="mb-1 flex items-baseline justify-between">
-        <span className="text-xs text-muted-foreground">Speed</span>
+        <span className="text-xs text-muted-foreground">{t("s.speed")}</span>
         <div className="flex items-baseline gap-3">
-          <span className="text-xs text-muted-foreground">peak {formatSpeed(max)}</span>
+          <span className="text-xs text-muted-foreground">
+            {t("s.peak", { v: formatSpeed(max) })}
+          </span>
           <span className="font-mono text-sm font-semibold text-primary">
             {formatSpeed(current)}
           </span>

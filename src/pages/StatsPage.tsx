@@ -33,7 +33,7 @@ function Stat({
 export function StatsPage() {
   const history = useApp((s) => s.history);
   const samples = useApp((s) => s.speedSamples);
-  const queue = useApp((s) => s.queue);
+  const activeCount = useApp((s) => s.queue.filter((t) => t.status === "downloading").length);
   const t = useT();
 
   const stats = useMemo(() => {
@@ -47,8 +47,6 @@ export function StatsPage() {
       : 0;
     return { completed: completed.length, failed: failed.length, totalBytes, totalTime, avgSpeed };
   }, [history]);
-
-  const activeCount = queue.filter((t) => t.status === "downloading").length;
 
   return (
     <div className="mx-auto max-w-3xl space-y-4 p-6">

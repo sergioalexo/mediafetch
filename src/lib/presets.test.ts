@@ -53,6 +53,17 @@ describe("isAlreadyDownloaded", () => {
     const history = [h({ url: "https://youtube.com/watch?v=X", mediaKey: "Youtube:X" })];
     expect(isAlreadyDownloaded(history, "https://youtu.be/X", "X")).toBe(true);
   });
+
+  it("matches an entry id against the id inside a media key when no URL could", () => {
+    // SoundCloud's numeric track id appears in no URL — only yt-dlp's key carries it.
+    const history = [
+      h({ url: "https://soundcloud.com/artist/track", mediaKey: "Soundcloud:123456" }),
+    ];
+    expect(
+      isAlreadyDownloaded(history, "https://api.soundcloud.com/tracks/123456", "123456")
+    ).toBe(true);
+    expect(isAlreadyDownloaded(history, "https://api.soundcloud.com/tracks/9", "9")).toBe(false);
+  });
 });
 
 describe("clampSampleRate", () => {
