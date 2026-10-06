@@ -1432,7 +1432,7 @@ export function FlagRU() {
   );
 }
 
-export const LANGUAGES: { value: Lang; label: string; Flag: () => JSX.Element }[] = [
+export const LANGUAGES: { value: Lang; label: string; Flag: () => React.JSX.Element }[] = [
   { value: "en", label: "English", Flag: FlagCA },
   { value: "uk", label: "Українська", Flag: FlagUA },
   { value: "ru", label: "Русский", Flag: FlagRU },
