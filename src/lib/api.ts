@@ -12,6 +12,7 @@ import type {
   Settings,
 } from "./types";
 import type { Theme } from "./theme";
+import type { SyncOutcome } from "./playlistSync";
 
 // ---- Settings ----
 export const getSettings = () => invoke<Settings>("get_settings");
@@ -92,3 +93,20 @@ export const uninstallBinary = (name: string) =>
 export const resetComponents = () => invoke<void>("reset_components");
 export const listBinaryVersions = (name: string) =>
   invoke<string[]>("list_binary_versions", { name });
+
+// ---- Watched playlists ----
+export const probePlaylist = (url: string) =>
+  invoke<{ title: string; count: number }>("probe_playlist", { url });
+/** Marks every song currently in the playlist as already downloaded. */
+export const seedPlaylistArchive = (id: string, url: string) =>
+  invoke<void>("seed_playlist_archive", { id, url });
+/** Checks every enabled playlist, or just `ids`; queues nothing itself. */
+export const checkPlaylists = (ids?: string[]) =>
+  invoke<SyncOutcome>("check_playlists", { ids: ids ?? null });
+export const deletePlaylistArchive = (id: string) =>
+  invoke<void>("delete_playlist_archive", { id });
+export const setPlaylistSyncShortcut = (shortcut: string) =>
+  invoke<void>("set_playlist_sync_shortcut", { shortcut });
+/** Native notification, honouring the Notifications setting. */
+export const notifyUser = (title: string, body: string) =>
+  invoke<void>("notify_user", { title, body });

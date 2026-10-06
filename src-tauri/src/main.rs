@@ -67,6 +67,16 @@ async fn test_cookies(app: AppHandle) -> cookies::CookieCheck {
     cookies::check(&app, &settings).await
 }
 
+/// Native notification for events the frontend detects itself (a playlist
+/// sync that ran from the global shortcut), honouring the same switch as
+/// download notifications.
+#[tauri::command(async)]
+fn notify_user(app: AppHandle, title: String, body: String) {
+    if settings_snapshot(&app).notifications {
+        notify::show(&app, &title, &body);
+    }
+}
+
 // ---------- Analysis ----------
 
 #[tauri::command]
@@ -666,6 +676,7 @@ fn main() {
             playlists::check_playlists,
             playlists::delete_playlist_archive,
             playlists::set_playlist_sync_shortcut,
+            notify_user,
             themes::list_themes,
             themes::save_theme,
             themes::delete_theme,

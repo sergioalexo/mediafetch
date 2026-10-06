@@ -463,6 +463,11 @@ const en = {
   "th.exported": "Theme exported",
   "th.imported": "Theme imported",
   "th.shareTooBig": "This theme is large; the JSON was copied to your clipboard instead of prefilling the link.",
+  "pl.syncRunning": "A playlist sync is already running",
+  "pl.upToDate": "Playlists up to date",
+  "pl.newSongs": "{n} new songs from {m} playlists",
+  "pl.syncFailed": "Playlist sync failed",
+  "pl.noPreset": "No preset available for the new songs",
 };
 
 export type MsgKey = keyof typeof en;
@@ -910,6 +915,11 @@ const uk: Record<MsgKey, string> = {
   "th.exported": "Тему експортовано",
   "th.imported": "Тему імпортовано",
   "th.shareTooBig": "Ця тема велика; JSON скопійовано в буфер обміну замість заповнення посилання.",
+  "pl.syncRunning": "Синхронізація плейлистів уже триває",
+  "pl.upToDate": "Плейлисти актуальні",
+  "pl.newSongs": "Нових пісень: {n} (плейлистів: {m})",
+  "pl.syncFailed": "Не вдалося синхронізувати плейлисти",
+  "pl.noPreset": "Немає пресету для нових пісень",
 };
 
 const ru: Record<MsgKey, string> = {
@@ -1355,6 +1365,11 @@ const ru: Record<MsgKey, string> = {
   "th.exported": "Тема экспортирована",
   "th.imported": "Тема импортирована",
   "th.shareTooBig": "Эта тема большая; JSON скопирован в буфер обмена вместо заполнения ссылки.",
+  "pl.syncRunning": "Синхронизация плейлистов уже идёт",
+  "pl.upToDate": "Плейлисты актуальны",
+  "pl.newSongs": "Новых песен: {n} (плейлистов: {m})",
+  "pl.syncFailed": "Не удалось синхронизировать плейлисты",
+  "pl.noPreset": "Нет пресета для новых песен",
 };
 
 const MESSAGES: Record<Lang, Record<MsgKey, string>> = { en, uk, ru };

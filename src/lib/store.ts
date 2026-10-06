@@ -27,6 +27,7 @@ import {
 } from "./presets";
 import { extractUrls } from "./utils";
 import { mergeHistoryEntry } from "./history";
+import { buildSyncItems } from "./playlistSync";
 import { applyCustomTheme, customThemeId, type Theme } from "./theme";
 
 export type Page = "downloads" | "history" | "stats" | "logs" | "settings" | "binaries";
@@ -139,6 +140,11 @@ interface AppState {
 
   showDisclaimer: boolean;
   setShowDisclaimer: (v: boolean) => void;
+
+  /** Watched-playlist sync (shortcut or Sync button); `lastRun` is unix ms. */
+  playlistSync: { running: boolean; lastRun: number | null };
+  /** Check every enabled watched playlist once and queue the songs not downloaded yet. */
+  syncPlaylists: () => Promise<void>;
 
   toasts: Toast[];
   toast: (t: Omit<Toast, "id">) => void;
@@ -390,6 +396,59 @@ export const useApp = create<AppState>((set, get) => ({
   showDisclaimer: false,
   setShowDisclaimer: (v) => set({ showDisclaimer: v }),
 
+  playlistSync: { running: false, lastRun: null },
+  syncPlaylists: async () => {
+    // Also guarded in the backend; this just avoids a pointless round trip
+    // when the shortcut is pressed twice in a row.
+    if (get().playlistSync.running) return;
+    set({ playlistSync: { ...get().playlistSync, running: true } });
+    const lang = get().settings?.language ?? "en";
+    const t = (k: MsgKey) => translate(lang, k);
+    // Messages for the toast, mirrored into a native notification when the
+    // window isn't in front (the shortcut works while the app is minimized).
+    const say = (title: string, description?: string, variant: Toast["variant"] = "default") => {
+      get().toast({ title, description, variant });
+      if (!document.hasFocus()) void api.notifyUser(title, description ?? "").catch(() => {});
+    };
+    try {
+      await flushSettings();
+      const outcome = await api.checkPlaylists();
+      // The check stamps lastChecked/lastNewCount on the backend; take them
+      // back so the next settings save doesn't overwrite them with stale ones.
+      set({ settings: await api.getSettings() });
+      if (outcome.alreadyRunning) {
+        get().toast({ title: translate(lang, "pl.syncRunning"), variant: "default" });
+        return;
+      }
+      const settings = get().settings;
+      let songs = 0;
+      let playlists = 0;
+      for (const check of outcome.checks) {
+        if (check.error) {
+          say(check.title, check.error, "error");
+          continue;
+        }
+        const items = settings ? buildSyncItems(check, settings, t) : [];
+        if (items.length === 0) {
+          if (check.newEntries.length > 0) say(translate(lang, "pl.noPreset"), check.title, "error");
+          continue;
+        }
+        await enqueueReportingDuplicates(get, items);
+        songs += items.length;
+        playlists++;
+      }
+      if (songs > 0) {
+        say(translate(lang, "pl.newSongs", { n: songs, m: playlists }), undefined, "success");
+      } else if (outcome.checks.every((c) => !c.error)) {
+        say(translate(lang, "pl.upToDate"));
+      }
+    } catch (e) {
+      say(translate(lang, "pl.syncFailed"), String(e), "error");
+    } finally {
+      set({ playlistSync: { running: false, lastRun: Date.now() } });
+    }
+  },
+
   toasts: [],
   toast: (t) => {
     const id = ++toastId;
@@ -503,6 +562,11 @@ export const useApp = create<AppState>((set, get) => ({
         description: e.payload.join(", "),
         variant: "default",
       });
+    });
+
+    // The global shortcut (registered in Rust) asks for a sync with this.
+    await listen("playlist-sync-requested", () => {
+      void get().syncPlaylists();
     });
 
     await get().loadSettings();
