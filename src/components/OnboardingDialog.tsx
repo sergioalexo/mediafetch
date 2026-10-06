@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CheckCircle2,
   Download,
@@ -12,6 +12,7 @@ import {
 import { useApp } from "@/lib/store";
 import { useT, type MsgKey } from "@/lib/i18n";
 import * as api from "@/lib/api";
+import { componentAction } from "@/lib/components";
 import { presetSummary, sampleRateLabel, TUNEMYMUSIC_URL } from "@/lib/presets";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -55,6 +56,30 @@ export function OnboardingDialog() {
   const [installing, setInstalling] = useState(false);
   const [failedComponents, setFailedComponents] = useState<Set<string>>(new Set());
   const [continueAnyway, setContinueAnyway] = useState(false);
+  // True from the moment the components step opens until the automatic
+  // check-and-install pass ends, so "Continue" can't be hit mid-check.
+  const [actions, setActions] = useState<Record<string, "install" | "update">>({});
+  const [preparing, setPreparing] = useState(false);
+  const autoStarted = useRef(false);
+
+  // First time the components step opens: look up the latest releases, then
+  // install what's missing and update what's outdated — no click needed. The
+  // button below stays for retries.
+  useEffect(() => {
+    if (step !== "components" || autoStarted.current) return;
+    autoStarted.current = true;
+    setPreparing(true);
+    void (async () => {
+      try {
+        await refreshBinaries(true);
+      } catch {
+        // Offline: carry on with whatever is missing.
+      }
+      await installAll();
+      setPreparing(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   // Don't flash before settings load (same guard as DisclaimerDialog), and
   // never show it again once finished.
@@ -71,10 +96,17 @@ export function OnboardingDialog() {
     setContinueAnyway(false);
     const failed = new Set<string>();
     for (const c of COMPONENTS) {
-      const already = binaries.find((b) => b.name === c.name)?.installed;
-      // No upstream macOS FFmpeg build exists to install — it comes from
-      // Homebrew, which the row below explains instead of a failed install.
-      if (already || (IS_MAC && c.name === "ffmpeg")) continue;
+      // Read the live store: the status was just refreshed, so the `binaries`
+      // captured by this render is stale. No upstream macOS FFmpeg build
+      // exists to install — it comes from Homebrew, which the row below
+      // explains instead of a failed install.
+      const action = componentAction(
+        c.name,
+        useApp.getState().binaries.find((b) => b.name === c.name),
+        IS_MAC,
+      );
+      if (!action) continue;
+      setActions((prev) => ({ ...prev, [c.name]: action }));
       try {
         await api.installBinary(c.name);
       } catch {
@@ -104,8 +136,8 @@ export function OnboardingDialog() {
 
   const allDone = COMPONENTS.every((c) => {
     const bin = binaries.find((b) => b.name === c.name);
-    return bin?.installed || failedComponents.has(c.name) || (IS_MAC && c.name === "ffmpeg");
-  });
+    return componentAction(c.name, bin, IS_MAC) === null || failedComponents.has(c.name);
+  }) && !preparing;
 
   const audioPreset =
     settings.presets.find((p) => p.id === "audio-mp3-320") ??
@@ -204,7 +236,7 @@ export function OnboardingDialog() {
                 const bin = binaries.find((b) => b.name === c.name);
                 const prog = binaryProgress[c.name];
                 const failed = failedComponents.has(c.name);
-                const done = !!bin?.installed && !failed;
+                const done = !!bin?.installed && !failed && componentAction(c.name, bin, IS_MAC) === null;
                 const active =
                   installing && prog && (prog.phase === "downloading" || prog.phase === "extracting");
                 return (
@@ -232,7 +264,14 @@ export function OnboardingDialog() {
                         </Button>
                       )}
                     </div>
-                    <p className="mt-1 text-[11px] text-muted-foreground">{t(c.purpose)}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {installing && actions[c.name] && !done && !failed && (
+                        <span className="mr-1 font-medium text-foreground">
+                          {t(actions[c.name] === "update" ? "ob.updating" : "ob.installing")}
+                        </span>
+                      )}
+                      {t(c.purpose)}
+                    </p>
                     {IS_MAC && c.name === "ffmpeg" && !bin?.installed && (
                       <p className="mt-1 text-[11px] text-muted-foreground">
                         {t("c.homebrew1")}{" "}
@@ -254,7 +293,7 @@ export function OnboardingDialog() {
                 );
               })}
             </div>
-            {!allDone && !installing && (
+            {!allDone && !installing && !preparing && (
               <Button className="w-full" onClick={() => void installAll()}>
                 <Download className="h-4 w-4" /> {t("ob.installAll")}
               </Button>
