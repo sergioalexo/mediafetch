@@ -8,6 +8,7 @@ mod fsutil;
 mod history;
 mod metadata;
 mod notify;
+mod playlists;
 mod settings;
 mod themes;
 mod types;
@@ -658,6 +659,10 @@ fn main() {
             list_binary_versions,
             check_app_update,
             collect_diagnostics,
+            playlists::probe_playlist,
+            playlists::seed_playlist_archive,
+            playlists::check_playlists,
+            playlists::delete_playlist_archive,
             themes::list_themes,
             themes::save_theme,
             themes::delete_theme,

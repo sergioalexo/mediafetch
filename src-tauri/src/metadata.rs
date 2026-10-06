@@ -161,7 +161,7 @@ fn gallery_title(url: &str) -> String {
     }
 }
 
-fn s(v: &Value, key: &str) -> Option<String> {
+pub(crate) fn s(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(|x| x.as_str()).map(|x| x.to_string())
 }
 fn f(v: &Value, key: &str) -> Option<f64> {
@@ -170,7 +170,7 @@ fn f(v: &Value, key: &str) -> Option<f64> {
 
 /// `thumbnail`, or failing that the last (largest) of `thumbnails` — the only
 /// form flat-playlist entries (YouTube's included) carry one in.
-fn thumbnail_of(v: &Value) -> Option<String> {
+pub(crate) fn thumbnail_of(v: &Value) -> Option<String> {
     s(v, "thumbnail").or_else(|| {
         v.get("thumbnails")?
             .as_array()?
@@ -181,7 +181,7 @@ fn thumbnail_of(v: &Value) -> Option<String> {
 }
 
 /// One `yt-dlp -J` run. Returns the JSON on success, or yt-dlp's error.
-async fn probe(app: &AppHandle, url: &str, settings: &Settings) -> Result<Vec<u8>, String> {
+pub(crate) async fn probe(app: &AppHandle, url: &str, settings: &Settings) -> Result<Vec<u8>, String> {
     let ytdlp = binaries::ytdlp_path(app)?;
 
     let mut cmd = tokio::process::Command::new(&ytdlp);
