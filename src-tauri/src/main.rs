@@ -580,7 +580,9 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let loaded = settings::load(&handle);
-            let auto_update = loaded.auto_update_components;
+            // Onboarding installs/updates the components itself; running this
+            // too would race it on the same binaries.
+            let auto_update = loaded.auto_update_components && loaded.onboarding_completed;
             app.manage(AppState::new(loaded));
             playlists::register_saved_shortcut(&handle);
 
@@ -622,8 +624,13 @@ fn main() {
                     let statuses = binaries::get_status(&handle, true).await;
                     let mut updated = Vec::new();
                     for s in statuses.iter().filter(|s| s.managed && s.update_available) {
-                        if binaries::install(&handle, &s.name, None).await.is_ok() {
-                            updated.push(s.name.clone());
+                        match binaries::install(&handle, &s.name, None).await {
+                            Ok(_) => updated.push(s.name.clone()),
+                            Err(e) => downloader::push_log(
+                                &handle,
+                                "app",
+                                format!("Auto-update of {} failed: {e}", s.name),
+                            ),
                         }
                     }
                     if !updated.is_empty() {

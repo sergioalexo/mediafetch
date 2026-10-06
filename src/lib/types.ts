@@ -184,6 +184,8 @@ export interface Settings {
   autoUpdateYtdlp: boolean;
   /** Auto-update every managed component (yt-dlp, FFmpeg, Deno, gallery-dl). */
   autoUpdateComponents: boolean;
+  /** Download and install a newer MediaFetch release on startup. */
+  autoUpdateApp: boolean;
   /** ASCII-only filenames (yt-dlp --restrict-filenames) — workaround for Unicode/Windows errors. */
   restrictFilenames: boolean;
   /** Auto re-queue a failed download this many times before leaving it Failed. 0 disables. */

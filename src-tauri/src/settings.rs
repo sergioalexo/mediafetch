@@ -56,6 +56,7 @@ const AUTO_THEME_MIGRATION: &str = "auto-theme";
 const MUSIC_320_MIGRATION: &str = "music-320-defaults";
 const ONBOARDING_MIGRATION: &str = "onboarding-skip-existing";
 const AUTO_UPDATE_COMPONENTS_MIGRATION: &str = "auto-update-components";
+const AUTO_UPDATE_EVERYTHING_MIGRATION: &str = "auto-update-everything";
 
 /// Photos *and* videos, exactly as the site stores them. The "media" quality
 /// preset resolves to a single progressive file, which is the only thing an
@@ -214,6 +215,8 @@ pub struct Settings {
     /// Check for and install newer releases of every *managed* component
     /// (yt-dlp, FFmpeg, Deno, gallery-dl) automatically on startup.
     pub auto_update_components: bool,
+    /// Download and install a newer MediaFetch release on startup.
+    pub auto_update_app: bool,
     /// yt-dlp --restrict-filenames: ASCII-only filenames. Workaround for
     /// Windows/Unicode filesystem errors on some setups; strips accents
     /// instead of preserving them, so it's opt-in.
@@ -273,6 +276,7 @@ impl Default for Settings {
             impersonate: String::new(),
             auto_update_ytdlp: false,
             auto_update_components: true,
+            auto_update_app: true,
             restrict_filenames: false,
             auto_retry_limit: 2,
             theme: "auto".into(),
@@ -391,10 +395,25 @@ pub fn load(app: &AppHandle) -> Settings {
         }
         migrated = true;
     }
+    migrated |= apply_auto_update_everything(&mut settings);
     if migrated {
         let _ = save(app, &settings);
     }
     settings
+}
+
+/// One-time: turns both auto-updates on for every install. The earlier
+/// migration copied the old yt-dlp-only flag (default off), which left many
+/// existing installs on stale tools that 403 on YouTube. Recorded in
+/// `migrations`, so a user who switches them off afterwards stays off.
+fn apply_auto_update_everything(settings: &mut Settings) -> bool {
+    if settings.migrations.iter().any(|m| m == AUTO_UPDATE_EVERYTHING_MIGRATION) {
+        return false;
+    }
+    settings.migrations.push(AUTO_UPDATE_EVERYTHING_MIGRATION.into());
+    settings.auto_update_components = true;
+    settings.auto_update_app = true;
+    true
 }
 
 /// Atomic, so a crash mid-write can't leave a truncated file — which would
@@ -425,5 +444,24 @@ mod tests {
         .unwrap();
         assert_eq!(p.preset_id, MUSIC_320_PRESET_ID);
         assert!(p.last_checked.is_none() && p.last_new_count.is_none() && p.last_error.is_none());
+    }
+
+    #[test]
+    fn auto_update_everything_runs_once() {
+        let mut old: Settings = serde_json::from_str(
+            r#"{"autoUpdateComponents": false, "migrations": ["auto-update-components"]}"#,
+        )
+        .unwrap();
+        assert!(!old.auto_update_components);
+        assert!(apply_auto_update_everything(&mut old));
+        assert!(old.auto_update_components && old.auto_update_app);
+
+        // Already migrated: the user's later opt-out must stick.
+        let mut done: Settings = serde_json::from_str(
+            r#"{"autoUpdateComponents": false, "autoUpdateApp": false, "migrations": ["auto-update-everything"]}"#,
+        )
+        .unwrap();
+        assert!(!apply_auto_update_everything(&mut done));
+        assert!(!done.auto_update_components && !done.auto_update_app);
     }
 }
