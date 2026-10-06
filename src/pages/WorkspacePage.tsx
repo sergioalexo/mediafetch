@@ -7,7 +7,7 @@ import {
   type ClipboardEvent,
   type DragEvent,
 } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion } from "motion/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AudioLines,
