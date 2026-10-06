@@ -74,6 +74,8 @@ export interface DownloadOptions {
   customFfmpegArgs?: string | null;
   /** Per-task sample rate override; null uses the global setting. */
   sampleRate?: SampleRate | null;
+  /** yt-dlp --download-archive file for this task alone (watched playlists). */
+  archiveFile?: string | null;
 }
 
 export interface Preset {
@@ -133,6 +135,20 @@ export interface DownloadTask {
   options: DownloadOptions;
 }
 
+/** A playlist checked for new songs by the sync shortcut / button. */
+export interface WatchedPlaylist {
+  id: string;
+  url: string;
+  title: string;
+  enabled: boolean;
+  /** Preset new songs are downloaded with. */
+  presetId: string;
+  /** Unix seconds of the last completed check. */
+  lastChecked?: number | null;
+  lastNewCount?: number | null;
+  lastError?: string | null;
+}
+
 export interface Settings {
   downloadDir: string;
   maxParallel: number;
@@ -188,6 +204,9 @@ export interface Settings {
   language: "en" | "uk" | "ru";
   /** The first-run onboarding flow has been finished (or reset to run again). */
   onboardingCompleted: boolean;
+  watchedPlaylists: WatchedPlaylist[];
+  /** Global hotkey that starts a playlist sync ("" = none). */
+  playlistSyncShortcut: string;
 }
 
 // ---- Cookie diagnostics ----

@@ -98,6 +98,11 @@ pub struct DownloadOptions {
     /// "original". `None` means use the global setting.
     #[serde(default)]
     pub sample_rate: Option<String>,
+    /// yt-dlp `--download-archive` file for this task alone; replaces the
+    /// global archive. Set for watched-playlist songs so each playlist
+    /// remembers what it already fetched.
+    #[serde(default)]
+    pub archive_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

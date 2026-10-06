@@ -526,6 +526,21 @@ pub fn network_args(settings: &Settings) -> Vec<String> {
     args
 }
 
+/// `--download-archive` for a task: its own archive file when it has one
+/// (a watched playlist), else the global one if enabled. Never both — yt-dlp
+/// would take only the last, silently dropping the other.
+fn archive_args(opts: &DownloadOptions, global_archive: Option<String>) -> Vec<String> {
+    let file = opts
+        .archive_file
+        .clone()
+        .filter(|f| !f.trim().is_empty())
+        .or(global_archive);
+    match file {
+        Some(f) => vec!["--download-archive".into(), f],
+        None => Vec::new(),
+    }
+}
+
 pub fn build_args(
     app: &AppHandle,
     opts: &DownloadOptions,
@@ -611,14 +626,12 @@ pub fn build_args(
     args.extend(network_args(settings));
 
     // Download archive
-    if settings.use_download_archive {
-        if let Ok(dir) = app.path().app_data_dir() {
-            args.extend([
-                "--download-archive".into(),
-                dir.join("download-archive.txt").to_string_lossy().into_owned(),
-            ]);
-        }
-    }
+    let global_archive = settings
+        .use_download_archive
+        .then(|| app.path().app_data_dir().ok())
+        .flatten()
+        .map(|dir| dir.join("download-archive.txt").to_string_lossy().into_owned());
+    args.extend(archive_args(opts, global_archive));
 
     // SponsorBlock
     if settings.sponsorblock_mode != "off" && !settings.sponsorblock_categories.is_empty() {
@@ -1608,6 +1621,34 @@ async fn finish_history(app: &AppHandle, task: &DownloadTask, settings: &Setting
             _ => ("Download complete", "Download failed"),
         };
         crate::notify::show(app, if ok { done_title } else { fail_title }, &task.title);
+    }
+}
+
+#[cfg(test)]
+mod archive_tests {
+    use super::*;
+
+    #[test]
+    fn global_archive_is_used_when_the_task_has_none() {
+        let opts = DownloadOptions::default();
+        assert_eq!(
+            archive_args(&opts, Some("global.txt".into())),
+            vec!["--download-archive", "global.txt"]
+        );
+    }
+
+    #[test]
+    fn task_archive_replaces_the_global_one() {
+        let opts = DownloadOptions { archive_file: Some("pl.txt".into()), ..Default::default() };
+        assert_eq!(
+            archive_args(&opts, Some("global.txt".into())),
+            vec!["--download-archive", "pl.txt"]
+        );
+    }
+
+    #[test]
+    fn no_archive_flag_when_neither_is_set() {
+        assert!(archive_args(&DownloadOptions::default(), None).is_empty());
     }
 }
 

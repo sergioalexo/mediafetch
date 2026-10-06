@@ -142,6 +142,38 @@ fn default_presets() -> Vec<Preset> {
     ]
 }
 
+/// A YouTube / YouTube Music playlist checked for new songs whenever the user
+/// triggers a sync (shortcut or button). What was already fetched lives in a
+/// per-playlist yt-dlp archive file, not here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchedPlaylist {
+    pub id: String,
+    /// As pasted (music.youtube.com or youtube.com playlist URL).
+    pub url: String,
+    /// From the first probe; user-editable.
+    pub title: String,
+    pub enabled: bool,
+    /// Which preset new songs are downloaded with.
+    #[serde(default = "default_watch_preset")]
+    pub preset_id: String,
+    /// Unix seconds of the last completed check.
+    #[serde(default)]
+    pub last_checked: Option<u64>,
+    #[serde(default)]
+    pub last_new_count: Option<u32>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+fn default_watch_preset() -> String {
+    MUSIC_320_PRESET_ID.into()
+}
+
+fn default_sync_shortcut() -> String {
+    "CommandOrControl+Shift+M".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -206,6 +238,11 @@ pub struct Settings {
     /// The first-run onboarding flow has been finished (or explicitly reset
     /// from Settings → About to run again).
     pub onboarding_completed: bool,
+    /// Playlists checked for new songs by the sync shortcut / button.
+    pub watched_playlists: Vec<WatchedPlaylist>,
+    /// Global hotkey that starts a playlist sync, in the plugin's
+    /// `CommandOrControl+Shift+M` spelling. Empty = no shortcut.
+    pub playlist_sync_shortcut: String,
 }
 
 impl Default for Settings {
@@ -247,6 +284,8 @@ impl Default for Settings {
             disclaimer_accepted: false,
             onboarding_completed: false,
             language: "en".into(),
+            watched_playlists: Vec::new(),
+            playlist_sync_shortcut: default_sync_shortcut(),
         }
     }
 }
@@ -364,4 +403,27 @@ pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let path = settings_path(app)?;
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     crate::fsutil::write_atomic(&path, json.as_bytes()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_without_playlist_fields_still_load() {
+        let s: Settings = serde_json::from_str(r#"{"maxParallel": 3}"#).unwrap();
+        assert!(s.watched_playlists.is_empty());
+        assert_eq!(s.playlist_sync_shortcut, "CommandOrControl+Shift+M");
+        assert_eq!(s.max_parallel, 3);
+    }
+
+    #[test]
+    fn watched_playlist_defaults_its_optional_fields() {
+        let p: WatchedPlaylist = serde_json::from_str(
+            r#"{"id":"a","url":"https://music.youtube.com/playlist?list=PL1","title":"T","enabled":true}"#,
+        )
+        .unwrap();
+        assert_eq!(p.preset_id, MUSIC_320_PRESET_ID);
+        assert!(p.last_checked.is_none() && p.last_new_count.is_none() && p.last_error.is_none());
+    }
 }
