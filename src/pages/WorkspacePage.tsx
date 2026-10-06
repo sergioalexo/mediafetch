@@ -17,6 +17,7 @@ import {
   ExternalLink,
   Film,
   Link2,
+  ListMusic,
   ListVideo,
   Loader2,
   Pause,
@@ -32,6 +33,7 @@ import {
 import type { DownloadOptions, DownloadTask, Preset } from "@/lib/types";
 import { buildDraftItems, draftPlan, useApp, type Draft } from "@/lib/store";
 import { useT, type MsgKey } from "@/lib/i18n";
+import { shortcutLabel } from "@/lib/playlistSync";
 import {
   isAlreadyDownloaded,
   optionsFromPreset,
@@ -67,6 +69,8 @@ export function WorkspacePage() {
   const downloadAll = useApp((s) => s.downloadAllDrafts);
   const downloadNext = useApp((s) => s.downloadNextDraft);
   const setDefaultPreset = useApp((s) => s.setDefaultPreset);
+  const syncPlaylists = useApp((s) => s.syncPlaylists);
+  const syncing = useApp((s) => s.playlistSync.running);
   const t = useT();
 
   const [input, setInput] = useState("");
@@ -338,15 +342,41 @@ export function WorkspacePage() {
         )}
       </div>
 
-      <p className="text-xs text-muted-foreground">
-        {t("ws.tuneMyMusicTip")}{" "}
-        <button
-          onClick={() => void api.openExternal(TUNEMYMUSIC_URL)}
-          className="underline underline-offset-2 hover:text-foreground"
-        >
-          {t("ws.tuneMyMusic")}
-        </button>
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground">
+          {t("ws.tuneMyMusicTip")}{" "}
+          <button
+            onClick={() => void api.openExternal(TUNEMYMUSIC_URL)}
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            {t("ws.tuneMyMusic")}
+          </button>
+        </p>
+        {settings?.watchedPlaylists.some((p) => p.enabled) && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => void syncPlaylists()}
+                disabled={syncing}
+              >
+                {syncing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ListMusic className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {settings.playlistSyncShortcut
+                ? t("pl.syncTip", { key: shortcutLabel(settings.playlistSyncShortcut) })
+                : t("pl.syncTipNoKey")}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
 
       {/* Action bar */}
       {readyCount > 0 && (

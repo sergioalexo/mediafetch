@@ -32,6 +32,7 @@ import { openIssueReport } from "@/lib/report";
 import { LANGUAGES, useT, type MsgKey } from "@/lib/i18n";
 import { presetSummary, SAMPLE_RATES, SERVICES } from "@/lib/presets";
 import { cn } from "@/lib/utils";
+import { PlaylistSection } from "@/components/PlaylistSection";
 import { PresetDialog } from "@/components/PresetDialog";
 import { ThemeSection } from "@/components/ThemeSection";
 import {
@@ -671,6 +672,9 @@ export function SettingsPage() {
           </Row>
         </CardContent>
       </Card>
+
+      {/* Watched playlists + sync hotkey */}
+      <PlaylistSection />
 
       {/* Legal */}
       <Card>

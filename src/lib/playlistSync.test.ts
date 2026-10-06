@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildSyncItems, presetForPlaylist, type PlaylistCheck } from "./playlistSync";
+import {
+  buildSyncItems,
+  presetForPlaylist,
+  shortcutFromEvent,
+  shortcutLabel,
+  type PlaylistCheck,
+} from "./playlistSync";
 import type { MsgKey } from "./i18n";
 import type { Preset, WatchedPlaylist } from "./types";
 
@@ -75,5 +81,37 @@ describe("presetForPlaylist", () => {
   it("falls back to the first preset when the default is gone too", () => {
     const s = { presets: [preset("x")], defaultPresetId: "gone" };
     expect(presetForPlaylist(s, { presetId: "gone" })?.id).toBe("x");
+  });
+});
+
+describe("shortcutFromEvent", () => {
+  const ev = (o: Partial<KeyboardEvent>) => ({
+    key: "m",
+    code: "KeyM",
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...o,
+  });
+
+  it("spells Ctrl+Shift+M the way the plugin expects", () => {
+    const s = shortcutFromEvent(ev({ ctrlKey: true, shiftKey: true }));
+    expect(s).toBe("CommandOrControl+Shift+M");
+    expect(shortcutLabel(s!)).toBe("Ctrl+Shift+M");
+  });
+
+  it("ignores a bare modifier, an unbindable key and a key without modifiers", () => {
+    expect(shortcutFromEvent(ev({ key: "Control", code: "ControlLeft", ctrlKey: true }))).toBeNull();
+    expect(shortcutFromEvent(ev({ code: "ContextMenu", ctrlKey: true }))).toBeNull();
+    expect(shortcutFromEvent(ev({}))).toBeNull();
+  });
+
+  it("maps digits, function and arrow keys", () => {
+    expect(shortcutFromEvent(ev({ key: "5", code: "Digit5", altKey: true }))).toBe("Alt+5");
+    expect(shortcutFromEvent(ev({ key: "F5", code: "F5", shiftKey: true }))).toBe("Shift+F5");
+    expect(shortcutFromEvent(ev({ key: "ArrowUp", code: "ArrowUp", metaKey: true }))).toBe(
+      "CommandOrControl+Up"
+    );
   });
 });
