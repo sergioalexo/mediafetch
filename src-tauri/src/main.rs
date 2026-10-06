@@ -549,6 +549,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -571,6 +572,7 @@ fn main() {
             let loaded = settings::load(&handle);
             let auto_update = loaded.auto_update_components;
             app.manage(AppState::new(loaded));
+            playlists::register_saved_shortcut(&handle);
 
             // Everything below spawns processes or touches the registry, so it
             // runs in the background rather than holding the window back.
@@ -663,6 +665,7 @@ fn main() {
             playlists::seed_playlist_archive,
             playlists::check_playlists,
             playlists::delete_playlist_archive,
+            playlists::set_playlist_sync_shortcut,
             themes::list_themes,
             themes::save_theme,
             themes::delete_theme,

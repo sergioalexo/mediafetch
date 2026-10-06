@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use crate::downloader::{self, settings_snapshot, AppState};
 use crate::metadata::{probe, s, thumbnail_of};
@@ -260,6 +261,67 @@ pub async fn check_playlists(
         checks.push(check);
     }
     Ok(SyncOutcome { already_running: false, checks })
+}
+
+/// Bind `shortcut` system-wide; pressing it asks the frontend to run a sync.
+/// The frontend owns the sync flow (it knows presets and shows the toast), so
+/// this only emits the request.
+fn register_sync_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
+    let parsed: Shortcut = shortcut
+        .parse()
+        .map_err(|_| format!("\"{shortcut}\" isn't a valid shortcut."))?;
+    app.global_shortcut()
+        .on_shortcut(parsed, |app, _, event| {
+            if event.state == ShortcutState::Pressed {
+                let _ = app.emit("playlist-sync-requested", ());
+            }
+        })
+        .map_err(|_| format!("Couldn't register {shortcut} — another app may be using it."))
+}
+
+/// Startup registration. A shortcut that fails here (taken by another app
+/// since last run) is logged, not fatal; the Sync button still works.
+pub fn register_saved_shortcut(app: &AppHandle) {
+    let shortcut = settings_snapshot(app).playlist_sync_shortcut;
+    if shortcut.trim().is_empty() {
+        return;
+    }
+    if let Err(e) = register_sync_shortcut(app, shortcut.trim()) {
+        downloader::push_log(app, "app", e);
+    }
+}
+
+/// Swap the sync hotkey ("" turns it off). The old one stays bound if the new
+/// one can't be registered, and nothing is saved in that case.
+#[tauri::command]
+pub fn set_playlist_sync_shortcut(app: AppHandle, shortcut: String) -> Result<(), String> {
+    let shortcut = shortcut.trim().to_string();
+    let old = settings_snapshot(&app).playlist_sync_shortcut;
+    let old = old.trim();
+    if shortcut == old {
+        return Ok(());
+    }
+    if !old.is_empty() {
+        if let Ok(parsed) = old.parse::<Shortcut>() {
+            let _ = app.global_shortcut().unregister(parsed);
+        }
+    }
+    if !shortcut.is_empty() {
+        if let Err(e) = register_sync_shortcut(&app, &shortcut) {
+            // Put the previous binding back rather than leave none.
+            if !old.is_empty() {
+                let _ = register_sync_shortcut(&app, old);
+            }
+            return Err(e);
+        }
+    }
+    let state = app.state::<AppState>();
+    let snapshot = {
+        let mut settings = state.settings.lock().unwrap();
+        settings.playlist_sync_shortcut = shortcut;
+        settings.clone()
+    };
+    settings::save(&app, &snapshot)
 }
 
 /// Called when a playlist is removed from the list.
