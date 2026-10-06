@@ -31,6 +31,7 @@ export const previewCommand = (options: DownloadOptions) =>
 export const getQueue = () => invoke<DownloadTask[]>("get_queue");
 export const getTaskLog = (id: string) => invoke<string[]>("get_task_log", { id });
 export const getAppLog = () => invoke<AppLogLine[]>("get_app_log");
+export const logAppMessage = (message: string) => invoke<void>("log_app_message", { message });
 export const clearAppLog = () => invoke<void>("clear_app_log");
 /** Queues the items and resolves with how many were skipped as duplicates. */
 export const enqueue = (items: DownloadOptions[]) =>

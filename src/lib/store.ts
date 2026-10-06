@@ -13,7 +13,9 @@ import type {
   Preset,
   Settings,
 } from "./types";
+import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import * as api from "./api";
+import { installAppUpdate } from "./appUpdate";
 import { translate, type MsgKey } from "./i18n";
 import {
   autoDownloadForUrl,
@@ -137,6 +139,8 @@ interface AppState {
 
   appUpdate: AppUpdateStatus | null;
   checkAppUpdate: () => Promise<void>;
+  /** Install a newer release on launch when `autoUpdateApp` is on and the queue is idle. */
+  autoUpdateApp: () => Promise<void>;
 
   showDisclaimer: boolean;
   setShowDisclaimer: (v: boolean) => void;
@@ -393,6 +397,35 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
+  autoUpdateApp: async () => {
+    const settings = get().settings;
+    // Dev builds have no signed release to fetch, and an unfinished
+    // onboarding must not be restarted underneath the user.
+    if (import.meta.env.DEV || !settings?.autoUpdateApp || !settings.onboardingCompleted) return;
+    try {
+      const update = await checkUpdater();
+      if (!update) return;
+      // Restarting would kill running downloads; leave those to the badge
+      // and the manual button on Components.
+      const busy = get().queue.some((t) =>
+        ["queued", "downloading", "postprocessing", "paused"].includes(t.status),
+      );
+      if (busy) {
+        void api.logAppMessage(`MediaFetch ${update.version} is available; not installing while downloads are active.`);
+        return;
+      }
+      get().toast({
+        title: translate(settings.language, "c.updatingApp", { v: update.version }),
+        variant: "default",
+      });
+      void api.logAppMessage(`Updating MediaFetch to ${update.version}…`);
+      await installAppUpdate(undefined, update);
+    } catch (e) {
+      // Offline or a failed install: the manual path on Components still works.
+      void api.logAppMessage(`Automatic app update failed: ${String(e)}`);
+    }
+  },
+
   showDisclaimer: false,
   setShowDisclaimer: (v) => set({ showDisclaimer: v }),
 
@@ -577,6 +610,7 @@ export const useApp = create<AppState>((set, get) => ({
     await get().loadAppLog();
     void get().refreshBinaries(true);
     void get().checkAppUpdate();
+    void get().autoUpdateApp();
 
     // Aggregate speed sampling for the live graph (keep last 120 samples ≈ 2 min).
     // Skipped entirely while nothing is downloading — an idle queue of 300

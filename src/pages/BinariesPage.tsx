@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { check as checkUpdater } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
 import {
   ArrowUpCircle,
   CheckCircle2,
@@ -17,6 +15,7 @@ import {
 import type { BinaryStatus } from "@/lib/types";
 import { useApp } from "@/lib/store";
 import { useT, type MsgKey } from "@/lib/i18n";
+import { installAppUpdate } from "@/lib/appUpdate";
 import * as api from "@/lib/api";
 import { formatBytes } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -355,28 +354,16 @@ function AppUpdateCard() {
   const installUpdate = async () => {
     setInstalling(true);
     try {
-      const update = await checkUpdater();
-      if (!update) {
+      const result = await installAppUpdate((downloaded, total) =>
+        setUpdateProgress({ downloaded, total }),
+      );
+      if (result === "none") {
         toast({
           title: t("c.noUpdate"),
           description: t("c.alreadyLatest"),
           variant: "default",
         });
-        return;
       }
-      let downloaded = 0;
-      let total = 0;
-      await update.downloadAndInstall((e) => {
-        if (e.event === "Started") {
-          total = e.data.contentLength ?? 0;
-          setUpdateProgress({ downloaded: 0, total });
-        } else if (e.event === "Progress") {
-          downloaded += e.data.chunkLength;
-          setUpdateProgress({ downloaded, total });
-        }
-      });
-      // On Windows the app exits while the installer runs; this is a no-op there.
-      await relaunch();
     } catch (e) {
       toast({
         title: t("c.selfUpdateFailed"),
@@ -555,6 +542,16 @@ export function BinariesPage() {
             <Switch
               checked={settings.autoUpdateComponents}
               onCheckedChange={(v) => void updateSettings({ autoUpdateComponents: v })}
+            />
+          </CardContent>
+          <CardContent className="flex items-center justify-between gap-6 border-t p-4">
+            <div className="min-w-0">
+              <div className="text-sm font-medium">{t("c.autoUpdateApp")}</div>
+              <div className="text-xs text-muted-foreground">{t("c.autoUpdateAppHint")}</div>
+            </div>
+            <Switch
+              checked={settings.autoUpdateApp}
+              onCheckedChange={(v) => void updateSettings({ autoUpdateApp: v })}
             />
           </CardContent>
         </Card>

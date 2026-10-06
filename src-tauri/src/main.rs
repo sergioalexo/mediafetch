@@ -133,6 +133,13 @@ fn get_app_log() -> Vec<downloader::AppLogLine> {
     downloader::app_log_all()
 }
 
+/// Lets the frontend record its own events (the launch-time self-update)
+/// in the same log book.
+#[tauri::command]
+fn log_app_message(app: AppHandle, message: String) {
+    downloader::push_log(&app, "app", message);
+}
+
 #[tauri::command]
 fn clear_app_log(app: AppHandle) {
     downloader::app_log_clear(&app);
@@ -652,6 +659,7 @@ fn main() {
             get_task_log,
             get_app_log,
             clear_app_log,
+            log_app_message,
             enqueue,
             pause_task,
             resume_task,
