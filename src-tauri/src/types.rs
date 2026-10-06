@@ -133,6 +133,11 @@ pub struct DownloadTask {
     /// `after_move` print once the run finishes (see MFDONE in downloader.rs).
     #[serde(default)]
     pub media_key: Option<String>,
+    /// Which run currently owns the task — a fresh number every time it
+    /// starts. A run whose number no longer matches was superseded (paused
+    /// and quickly resumed, say) and must leave the task alone. Backend-only.
+    #[serde(skip)]
+    pub run: u64,
     pub options: DownloadOptions,
 }
 

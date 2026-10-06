@@ -2,6 +2,7 @@
 //! enforces the parallel-download limit and drives pause/resume/retry.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -241,23 +242,44 @@ fn emit_task(app: &AppHandle, task: &DownloadTask) {
     let _ = app.emit("task-progress", task);
 }
 
-/// Mutate a task by id and return a clone of the updated task.
-fn with_task<F: FnOnce(&mut DownloadTask)>(
+/// Run numbers handed out by `pump`; see `DownloadTask::run`.
+static NEXT_RUN: AtomicU64 = AtomicU64::new(1);
+
+/// Whether this run still owns its task: the task exists, is running, and
+/// hasn't been started again since. When the user pauses and resumes before
+/// the killed process has finished exiting, its exit handler would otherwise
+/// see "downloading" — the new run — and record the kill as a failure.
+fn owns_task(app: &AppHandle, task: &DownloadTask) -> bool {
+    let state = app.state::<AppState>();
+    let q = state.queue.lock().unwrap();
+    q.iter()
+        .any(|t| t.id == task.id && t.run == task.run && t.status.is_running())
+}
+
+/// Mutate this run's task and return a clone of the result — only while the
+/// run still owns it: a superseded run's late output mustn't overwrite the
+/// new run's progress.
+fn with_own_task<F: FnOnce(&mut DownloadTask)>(
     app: &AppHandle,
-    id: &str,
+    task: &DownloadTask,
     f: F,
 ) -> Option<DownloadTask> {
     let state = app.state::<AppState>();
     let mut q = state.queue.lock().unwrap();
-    let task = q.iter_mut().find(|t| t.id == id)?;
-    f(task);
-    Some(task.clone())
+    let t = q.iter_mut().find(|t| t.id == task.id && t.run == task.run)?;
+    f(t);
+    Some(t.clone())
 }
 
-fn task_status(app: &AppHandle, id: &str) -> Option<TaskStatus> {
+/// Drop this run's pid entry — only if it is still this run's: a newer run of
+/// the same task may already have registered its own.
+fn release_pid(app: &AppHandle, id: &str, pid: Option<u32>) {
+    let Some(pid) = pid else { return };
     let state = app.state::<AppState>();
-    let q = state.queue.lock().unwrap();
-    q.iter().find(|t| t.id == id).map(|t| t.status)
+    let mut pids = state.pids.lock().unwrap();
+    if pids.get(id) == Some(&pid) {
+        pids.remove(id);
+    }
 }
 
 /// A copy of the current settings, taken without holding the lock across
@@ -446,6 +468,7 @@ pub fn pump(app: &AppHandle) {
                 t.status = TaskStatus::Downloading;
                 t.started_at = Some(now_unix());
                 t.error = None;
+                t.run = NEXT_RUN.fetch_add(1, Ordering::Relaxed);
                 to_start.push(t.clone());
                 slots -= 1;
             }
@@ -1050,7 +1073,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
 
     // The task was paused, cancelled or removed while the bitrate probe or
     // the argument build ran — there was no process yet for that to kill.
-    if !task_status(&app, &task.id).is_some_and(TaskStatus::is_running) {
+    if !owns_task(&app, &task) {
         emit_queue(&app);
         pump(&app);
         return;
@@ -1076,16 +1099,19 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         }
     };
 
-    if let Some(pid) = child.id() {
+    let pid = child.id();
+    if let Some(pid) = pid {
         let state = app.state::<AppState>();
         state.pids.lock().unwrap().insert(task.id.clone(), pid);
     }
     // A pause or cancel that landed between the check above and the pid
     // being registered found nothing to kill. Honour it now, or the process
     // would run to completion under a task that says it's paused.
-    if !task_status(&app, &task.id).is_some_and(TaskStatus::is_running) {
-        kill_task_process(&app, &task.id);
+    if !owns_task(&app, &task) {
+        // Nothing has spawned children yet, so the process alone is enough.
+        let _ = child.start_kill();
         let _ = child.wait().await;
+        release_pid(&app, &task.id, pid);
         emit_queue(&app);
         pump(&app);
         return;
@@ -1168,7 +1194,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                     } else {
                         None
                     };
-                    updated = with_task(&app, &task.id, |t| {
+                    updated = with_own_task(&app, &task, |t| {
                         if t.options.title.is_none() {
                             if let Some(stem) = file_stem(&path) {
                                 t.title = stem;
@@ -1192,7 +1218,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                     let pl_index = parse_f64(fields[5]).map(|x| x as u32);
                     let pl_count = parse_f64(fields[6]).map(|x| x as u32);
 
-                    updated = with_task(&app, &task.id, |t| {
+                    updated = with_own_task(&app, &task, |t| {
                         if t.status == TaskStatus::Downloading
                             || t.status == TaskStatus::Postprocessing
                         {
@@ -1214,7 +1240,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                     });
                 }
             } else if line.starts_with("MFPP") {
-                updated = with_task(&app, &task.id, |t| {
+                updated = with_own_task(&app, &task, |t| {
                     if t.status == TaskStatus::Downloading {
                         t.status = TaskStatus::Postprocessing;
                         t.speed = 0.0;
@@ -1225,7 +1251,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             } else if let Some(path) = destination_path(line) {
                 let path = Some(path.to_string());
                 produced.clone_from(&path);
-                updated = with_task(&app, &task.id, |t| {
+                updated = with_own_task(&app, &task, |t| {
                     // A task queued without prior analysis has no title yet;
                     // the destination stem is the title as the output template
                     // rendered it, and unlike the progress lines it survives
@@ -1251,15 +1277,11 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
 
     let exit = child.wait().await;
     let stderr_tail = stderr_task.await.unwrap_or_default();
+    release_pid(&app, &task.id, pid);
 
-    {
-        let state = app.state::<AppState>();
-        state.pids.lock().unwrap().remove(&task.id);
-    }
-
-    // If the user paused, cancelled or removed it, the kill caused the
-    // non-zero exit — leave the status they chose in place.
-    if !task_status(&app, &task.id).is_some_and(TaskStatus::is_running) {
+    // If the user paused, cancelled or removed it — or already started it
+    // again — the kill caused the non-zero exit: leave the task as it is.
+    if !owns_task(&app, &task) {
         emit_queue(&app);
         pump(&app);
         return;
@@ -1276,7 +1298,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     let media_produced = gallery || saw_mfdone || file_exists;
 
     if exit_ok && media_produced {
-        let done = with_task(&app, &task.id, |t| {
+        let done = with_own_task(&app, &task, |t| {
             t.status = TaskStatus::Completed;
             t.progress = 100.0;
             t.speed = 0.0;
@@ -1289,7 +1311,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     } else if exit_ok && !gallery && already_had {
         // Nothing new was produced, but nothing failed either — don't add a
         // second history entry for a track already in the archive.
-        with_task(&app, &task.id, |t| {
+        with_own_task(&app, &task, |t| {
             t.status = TaskStatus::Completed;
             t.progress = 100.0;
             t.speed = 0.0;
@@ -1341,7 +1363,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                 ),
             );
             tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-            with_task(&app, &task.id, |t| {
+            with_own_task(&app, &task, |t| {
                 // Paused or cancelled during the pause above: the user's
                 // choice stands, rather than being re-queued over the top.
                 if !t.status.is_running() {
@@ -1359,7 +1381,7 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                 t.error = Some(error.clone());
             });
         } else {
-            let done = with_task(&app, &task.id, |t| {
+            let done = with_own_task(&app, &task, |t| {
                 t.status = TaskStatus::Failed;
                 t.error = Some(error.clone());
                 t.completed_at = Some(now_unix());
@@ -1419,7 +1441,7 @@ async fn run_gallery_stdout(
         let elapsed = started.elapsed().as_secs_f64();
         let speed = if elapsed > 0.0 { bytes as f64 / elapsed } else { 0.0 };
 
-        let updated = with_task(app, &task.id, |t| {
+        let updated = with_own_task(app, task, |t| {
             if t.status == TaskStatus::Downloading || t.status == TaskStatus::Postprocessing {
                 t.status = TaskStatus::Downloading;
             }
@@ -1528,7 +1550,7 @@ fn friendly_error(error: &str, failure: FailureKind) -> String {
 async fn fail_task(app: &AppHandle, task: &DownloadTask, settings: &Settings, error: String) {
     clear_log(app, &task.id);
     push_log(app, &task.id, error.clone());
-    let done = with_task(app, &task.id, |t| {
+    let done = with_own_task(app, task, |t| {
         t.status = TaskStatus::Failed;
         t.error = Some(error);
         t.completed_at = Some(now_unix());
