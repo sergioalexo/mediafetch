@@ -1,27 +1,68 @@
 //! Self-contained manager for the external tools MediaFetch depends on
-//! (yt-dlp and FFmpeg). Handles discovery, version detection, update checks
-//! against the upstream GitHub repositories and in-place installs/updates.
+//! (yt-dlp, FFmpeg, Deno and gallery-dl). Handles discovery, version
+//! detection, update checks against the upstream GitHub repositories and
+//! in-place installs/updates with a one-step rollback slot.
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::io::AsyncWriteExt;
 
 pub const YTDLP: &str = "yt-dlp";
 pub const FFMPEG: &str = "ffmpeg";
 pub const GALLERYDL: &str = "gallery-dl";
 /// The JavaScript runtime yt-dlp uses to solve YouTube's signature and `n`
-/// challenges. Optional, but without one (or Node/Bun on PATH) most YouTube
+/// challenges. Optional, but without one (or Node on PATH) most YouTube
 /// player clients return storyboard images and no audio or video at all.
 pub const DENO: &str = "deno";
 
-const YTDLP_REPO: &str = "yt-dlp/yt-dlp";
-const FFMPEG_REPO: &str = "BtbN/FFmpeg-Builds";
-/// gallery-dl's own repository publishes no binaries; the project's
-/// standalone executables are built and released here.
-const GALLERYDL_REPO: &str = "gdl-org/builds";
-const DENO_REPO: &str = "denoland/deno";
+/// Everything that differs between the managed components.
+struct Component {
+    name: &'static str,
+    /// Where the release assets are published.
+    release_repo: &'static str,
+    /// The project itself, for the Components page's source link.
+    home_url: &'static str,
+    version_arg: &'static str,
+}
+
+const COMPONENTS: [Component; 4] = [
+    Component {
+        name: YTDLP,
+        release_repo: "yt-dlp/yt-dlp",
+        home_url: "https://github.com/yt-dlp/yt-dlp",
+        version_arg: "--version",
+    },
+    Component {
+        name: GALLERYDL,
+        // gallery-dl's own repository publishes no binaries; the project's
+        // standalone executables are built and released here.
+        release_repo: "gdl-org/builds",
+        home_url: "https://github.com/mikf/gallery-dl",
+        version_arg: "--version",
+    },
+    Component {
+        name: DENO,
+        release_repo: "denoland/deno",
+        home_url: "https://github.com/denoland/deno",
+        version_arg: "--version",
+    },
+    Component {
+        name: FFMPEG,
+        release_repo: "BtbN/FFmpeg-Builds",
+        home_url: "https://github.com/BtbN/FFmpeg-Builds",
+        version_arg: "-version",
+    },
+];
+
+fn component(name: &str) -> Result<&'static Component, String> {
+    COMPONENTS
+        .iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| format!("Unknown binary: {name}"))
+}
 
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -92,6 +133,10 @@ pub struct BinaryProgress {
 #[derive(Deserialize)]
 struct GhRelease {
     tag_name: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    published_at: Option<String>,
     assets: Vec<GhAsset>,
     #[serde(default)]
     prerelease: bool,
@@ -177,13 +222,15 @@ pub fn ffmpeg_dir(app: &AppHandle) -> Option<PathBuf> {
 /// Files that make up a managed component (first entry is the main exe).
 fn component_files(name: &str) -> Vec<String> {
     match name {
-        YTDLP => vec![exe_name(YTDLP)],
-        GALLERYDL => vec![exe_name(GALLERYDL)],
-        DENO => vec![exe_name(DENO)],
-        FFMPEG => vec![exe_name(FFMPEG), exe_name("ffprobe"), "ffmpeg.tag".to_string()],
+        YTDLP | GALLERYDL | DENO => vec![exe_name(name)],
+        FFMPEG => vec![exe_name(FFMPEG), exe_name("ffprobe"), FFMPEG_TAG_FILE.to_string()],
         _ => Vec::new(),
     }
 }
+
+/// Which FFmpeg build is installed — FFmpeg's own version string doesn't say
+/// which release it came from, so the installer records it here.
+const FFMPEG_TAG_FILE: &str = "ffmpeg.tag";
 
 /// Path of the rollback copy of a component's main exe, if one exists.
 fn previous_exe(app: &AppHandle, name: &str) -> Option<PathBuf> {
@@ -255,6 +302,7 @@ pub fn uninstall(app: &AppHandle, name: &str) -> Result<(), String> {
         let _ = std::fs::remove_file(dir.join(f));
         let _ = std::fs::remove_file(dir.join("previous").join(f));
     }
+    remove_leftovers(&dir, name);
     Ok(())
 }
 
@@ -279,7 +327,7 @@ pub fn reset_all(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn run_version(path: &PathBuf, arg: &str) -> Option<String> {
+fn run_version(path: &Path, arg: &str) -> Option<String> {
     let mut cmd = std::process::Command::new(path);
     cmd.arg(arg);
     #[cfg(windows)]
@@ -292,17 +340,28 @@ fn run_version(path: &PathBuf, arg: &str) -> Option<String> {
     text.lines().next().map(|l| l.trim().to_string())
 }
 
-fn ffmpeg_installed_tag(app: &AppHandle) -> Option<String> {
-    let tag_file = bin_dir(app).ok()?.join("ffmpeg.tag");
-    std::fs::read_to_string(tag_file).ok().map(|s| s.trim().to_string())
+/// The version a component reports, reduced to the part its release tags use
+/// where they differ: "deno 2.5.1 (stable, …)" -> "2.5.1", and
+/// "ffmpeg version N-118000-g1234abc-20260601 Copyright …" -> the build token.
+fn parse_version(name: &str, first_line: &str) -> String {
+    let token = match name {
+        DENO => first_line.split_whitespace().nth(1),
+        FFMPEG => first_line.split_whitespace().nth(2),
+        _ => return first_line.to_string(),
+    };
+    token.unwrap_or("unknown").to_string()
+}
+
+fn installed_version(name: &str, path: &Path) -> Option<String> {
+    let arg = component(name).ok()?.version_arg;
+    run_version(path, arg).map(|line| parse_version(name, &line))
 }
 
 /// First line of `<tool> --version` (or `-version` for ffmpeg), if the tool is
 /// resolvable. Used for the diagnostics block in issue reports.
 pub fn tool_version(app: &AppHandle, name: &str) -> Option<String> {
     let (path, _) = resolve(app, name)?;
-    let arg = if name == FFMPEG { "-version" } else { "--version" };
-    run_version(&path, arg)
+    run_version(&path, component(name).ok()?.version_arg)
 }
 
 /// The proxy configured in the app settings ("" when unset).
@@ -313,7 +372,17 @@ pub(crate) fn app_proxy(app: &AppHandle) -> String {
 }
 
 pub(crate) fn http_client(proxy: &str) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder().user_agent("MediaFetch (https://github.com)");
+    let mut builder = reqwest::Client::builder()
+        .user_agent(concat!(
+            "MediaFetch/",
+            env!("CARGO_PKG_VERSION"),
+            " (+https://github.com/sergioalexo/mediafetch)"
+        ))
+        // A dead connection used to leave an install spinning forever. There
+        // is deliberately no overall timeout — a 150 MB FFmpeg build on a slow
+        // line is fine — but a stall this long is not.
+        .connect_timeout(Duration::from_secs(15))
+        .read_timeout(Duration::from_secs(60));
     if !proxy.is_empty() {
         builder = builder.proxy(
             reqwest::Proxy::all(proxy).map_err(|e| format!("invalid proxy setting: {e}"))?,
@@ -358,13 +427,29 @@ async fn release_by_tag(repo: &str, tag: &str, proxy: &str) -> Result<GhRelease,
     .await
 }
 
-fn repo_for(name: &str) -> Result<&'static str, String> {
-    match name {
-        YTDLP => Ok(YTDLP_REPO),
-        FFMPEG => Ok(FFMPEG_REPO),
-        GALLERYDL => Ok(GALLERYDL_REPO),
-        DENO => Ok(DENO_REPO),
-        other => Err(format!("Unknown binary: {other}")),
+/// What identifies a release for update checks: normally its tag.
+///
+/// BtbN's FFmpeg "latest" release is the exception — it is rebuilt in place
+/// under the same `latest` tag every day, so comparing tags never saw an
+/// update and the managed FFmpeg stayed at whatever was first installed. Its
+/// name carries the build stamp ("Latest Auto-Build (2026-10-06 13:06)"),
+/// which is also the dated tag the same build is published under
+/// ("autobuild-2026-10-06-13-06").
+fn build_id(name: &str, release: &GhRelease) -> String {
+    if name != FFMPEG || release.tag_name != "latest" {
+        return release.tag_name.clone();
+    }
+    let stamp = release
+        .name
+        .as_deref()
+        .and_then(|n| n.rsplit_once('('))
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .map(|(stamp, _)| stamp.trim())
+        .filter(|s| !s.is_empty());
+    match (stamp, &release.published_at) {
+        (Some(stamp), _) => format!("autobuild-{}", stamp.replace([' ', ':'], "-")),
+        (None, Some(published)) => format!("latest-{published}"),
+        (None, None) => release.tag_name.clone(),
     }
 }
 
@@ -377,7 +462,7 @@ fn gallerydl_build(version: &str) -> Option<&str> {
 
 /// Recent release tags of a component, newest first.
 pub async fn list_versions(app: &AppHandle, name: &str) -> Result<Vec<String>, String> {
-    let repo = repo_for(name)?;
+    let repo = component(name)?.release_repo;
     let releases: Vec<GhRelease> = fetch_json(
         &format!("https://api.github.com/repos/{repo}/releases?per_page=20"),
         &app_proxy(app),
@@ -390,146 +475,127 @@ pub async fn list_versions(app: &AppHandle, name: &str) -> Result<Vec<String>, S
         .collect())
 }
 
-/// Latest release tag, or None when the lookup fails (offline, rate limited).
-async fn latest_tag_opt(repo: &str, proxy: &str) -> Option<String> {
-    latest_release(repo, proxy).await.ok().map(|r| r.tag_name)
+/// Build id of the latest release, or None when the lookup fails (offline,
+/// rate limited).
+async fn latest_build_id(name: &str, proxy: &str) -> Option<String> {
+    let repo = component(name).ok()?.release_repo;
+    latest_release(repo, proxy).await.ok().map(|r| build_id(name, &r))
+}
+
+/// What can be learned about a component without the network.
+struct LocalStatus {
+    resolved: Option<(PathBuf, bool)>,
+    current: Option<String>,
+    previous: Option<String>,
+    /// The build id recorded at install time (FFmpeg only).
+    installed_build: Option<String>,
+}
+
+fn local_status(app: &AppHandle, name: &str) -> LocalStatus {
+    let resolved = resolve(app, name);
+    LocalStatus {
+        current: resolved.as_ref().and_then(|(p, _)| installed_version(name, p)),
+        previous: previous_exe(app, name).and_then(|p| installed_version(name, &p)),
+        installed_build: (name == FFMPEG)
+            .then(|| bin_dir(app).ok())
+            .flatten()
+            .and_then(|dir| std::fs::read_to_string(dir.join(FFMPEG_TAG_FILE)).ok())
+            .map(|s| s.trim().to_string()),
+        resolved,
+    }
+}
+
+/// Whether the latest release is newer than what's installed, comparing in
+/// whatever terms each component's versions and release tags share.
+fn update_available(name: &str, local: &LocalStatus, latest: &str) -> bool {
+    let managed = local.resolved.as_ref().is_some_and(|(_, m)| *m);
+    let Some(current) = local.current.as_deref() else {
+        return false;
+    };
+    match name {
+        // Only meaningful for a managed install, where the build was recorded.
+        FFMPEG => managed && local.installed_build.as_deref().is_some_and(|b| b != latest),
+        GALLERYDL => gallerydl_build(current) != Some(latest.trim_start_matches('v')),
+        DENO => current != latest.trim_start_matches('v'),
+        _ => current != latest,
+    }
 }
 
 pub async fn get_status(app: &AppHandle, check_latest: bool) -> Vec<BinaryStatus> {
-    let mut out = Vec::new();
     let proxy = app_proxy(app);
 
-    // One round trip, not four. These were awaited one after another, so the
-    // Components page — and every app start, which refreshes it — waited for
-    // the sum of four GitHub requests instead of the slowest one.
-    let (ytdlp_latest, gallerydl_latest, deno_latest, ffmpeg_latest) = if check_latest {
-        tokio::join!(
-            latest_tag_opt(YTDLP_REPO, &proxy),
-            latest_tag_opt(GALLERYDL_REPO, &proxy),
-            latest_tag_opt(DENO_REPO, &proxy),
-            latest_tag_opt(FFMPEG_REPO, &proxy),
-        )
-    } else {
-        (None, None, None, None)
-    };
-
-    // ---- yt-dlp ----
-    let ytdlp = resolve(app, YTDLP);
-    let ytdlp_version = ytdlp.as_ref().and_then(|(p, _)| run_version(p, "--version"));
-    out.push(BinaryStatus {
-        name: YTDLP.into(),
-        repo_url: format!("https://github.com/{YTDLP_REPO}"),
-        releases_url: format!("https://github.com/{YTDLP_REPO}/releases"),
-        path: ytdlp.as_ref().map(|(p, _)| p.to_string_lossy().into_owned()),
-        installed: ytdlp.is_some(),
-        managed: ytdlp.as_ref().map(|(_, m)| *m).unwrap_or(false),
-        update_available: match (&ytdlp_version, &ytdlp_latest) {
-            (Some(cur), Some(latest)) => cur != latest,
-            _ => false,
-        },
-        current_version: ytdlp_version,
-        latest_version: ytdlp_latest,
-        previous_version: previous_exe(app, YTDLP).and_then(|p| run_version(&p, "--version")),
-    });
-
-    // ---- gallery-dl ----
-    let gallerydl = resolve(app, GALLERYDL);
-    let gallerydl_version = gallerydl
-        .as_ref()
-        .and_then(|(p, _)| run_version(p, "--version"));
-    out.push(BinaryStatus {
-        name: GALLERYDL.into(),
-        repo_url: "https://github.com/mikf/gallery-dl".into(),
-        releases_url: format!("https://github.com/{GALLERYDL_REPO}/releases"),
-        path: gallerydl.as_ref().map(|(p, _)| p.to_string_lossy().into_owned()),
-        installed: gallerydl.is_some(),
-        managed: gallerydl.as_ref().map(|(_, m)| *m).unwrap_or(false),
-        update_available: match (&gallerydl_version, &gallerydl_latest) {
-            (Some(cur), Some(latest)) => {
-                gallerydl_build(cur) != Some(latest.trim_start_matches('v'))
+    // Everything at once: the release lookups, and the local version probes
+    // on the blocking pool. One after another, the page waited for four GitHub
+    // requests plus up to eight process spawns — and a cold `yt-dlp
+    // --version` alone can take a second.
+    let latest = futures_util::future::join_all(COMPONENTS.iter().map(|c| {
+        let proxy = &proxy;
+        async move {
+            if check_latest {
+                latest_build_id(c.name, proxy).await
+            } else {
+                None
             }
-            _ => false,
-        },
-        current_version: gallerydl_version,
-        latest_version: gallerydl_latest,
-        previous_version: previous_exe(app, GALLERYDL)
-            .and_then(|p| run_version(&p, "--version")),
-    });
+        }
+    }));
+    let local = futures_util::future::join_all(COMPONENTS.iter().map(|c| {
+        let (app, name) = (app.clone(), c.name);
+        tauri::async_runtime::spawn_blocking(move || local_status(&app, name))
+    }));
+    let (latest, local) = tokio::join!(latest, local);
 
-    // ---- deno ----
-    // "deno 2.5.1 (stable, release, x86_64-pc-windows-msvc)" -> "2.5.1", to
-    // compare against release tags like "v2.5.1".
-    let deno = resolve(app, DENO);
-    let deno_version = deno.as_ref().and_then(|(p, _)| {
-        run_version(p, "--version")
-            .and_then(|line| line.split_whitespace().nth(1).map(|v| v.to_string()))
-    });
-    out.push(BinaryStatus {
-        name: DENO.into(),
-        repo_url: format!("https://github.com/{DENO_REPO}"),
-        releases_url: format!("https://github.com/{DENO_REPO}/releases"),
-        path: deno.as_ref().map(|(p, _)| p.to_string_lossy().into_owned()),
-        installed: deno.is_some(),
-        managed: deno.as_ref().map(|(_, m)| *m).unwrap_or(false),
-        update_available: match (&deno_version, &deno_latest) {
-            (Some(cur), Some(latest)) => cur != latest.trim_start_matches('v'),
-            _ => false,
-        },
-        current_version: deno_version,
-        latest_version: deno_latest,
-        previous_version: previous_exe(app, DENO).and_then(|p| {
-            run_version(&p, "--version")
-                .and_then(|line| line.split_whitespace().nth(1).map(|v| v.to_string()))
-        }),
-    });
-
-    // ---- ffmpeg ----
-    let ffmpeg = resolve(app, FFMPEG);
-    let ffmpeg_version = ffmpeg.as_ref().and_then(|(p, _)| {
-        run_version(p, "-version").map(|line| {
-            // "ffmpeg version N-118000-g1234abc-20260601 Copyright ..." -> version token
-            line.split_whitespace()
-                .nth(2)
-                .unwrap_or("unknown")
-                .to_string()
+    COMPONENTS
+        .iter()
+        .zip(latest)
+        .zip(local)
+        .filter_map(|((c, latest), local)| {
+            let local = local.ok()?;
+            Some(BinaryStatus {
+                name: c.name.into(),
+                repo_url: c.home_url.into(),
+                releases_url: format!("https://github.com/{}/releases", c.release_repo),
+                path: local
+                    .resolved
+                    .as_ref()
+                    .map(|(p, _)| p.to_string_lossy().into_owned()),
+                installed: local.resolved.is_some(),
+                managed: local.resolved.as_ref().is_some_and(|(_, m)| *m),
+                update_available: latest
+                    .as_deref()
+                    .is_some_and(|l| update_available(c.name, &local, l)),
+                current_version: local.current.clone(),
+                latest_version: latest,
+                previous_version: local.previous,
+            })
         })
-    });
-    let installed_tag = ffmpeg_installed_tag(app);
-    let managed = ffmpeg.as_ref().map(|(_, m)| *m).unwrap_or(false);
-    out.push(BinaryStatus {
-        name: FFMPEG.into(),
-        repo_url: format!("https://github.com/{FFMPEG_REPO}"),
-        releases_url: format!("https://github.com/{FFMPEG_REPO}/releases"),
-        path: ffmpeg.as_ref().map(|(p, _)| p.to_string_lossy().into_owned()),
-        installed: ffmpeg.is_some(),
-        managed,
-        update_available: match (&installed_tag, &ffmpeg_latest) {
-            // Only meaningful for managed installs where we recorded the tag.
-            (Some(cur), Some(latest)) if managed => cur != latest,
-            _ => false,
+        .collect()
+}
+
+fn emit_progress(app: &AppHandle, name: &str, phase: &str, downloaded: u64, total: u64, message: Option<String>) {
+    let _ = app.emit(
+        "binary-progress",
+        &BinaryProgress {
+            name: name.into(),
+            phase: phase.into(),
+            downloaded,
+            total,
+            message,
         },
-        current_version: ffmpeg_version,
-        latest_version: ffmpeg_latest,
-        previous_version: previous_exe(app, FFMPEG).and_then(|p| {
-            run_version(&p, "-version")
-                .map(|line| line.split_whitespace().nth(2).unwrap_or("unknown").to_string())
-        }),
-    });
-
-    out
+    );
 }
 
-fn emit_progress(app: &AppHandle, p: BinaryProgress) {
-    let _ = app.emit("binary-progress", &p);
+/// Stream a release asset to `dest`, reporting progress. A partial file never
+/// outlives a failure — one left behind used to sit in the bin dir for good.
+async fn download_to(app: &AppHandle, name: &str, asset: &GhAsset, dest: &Path) -> Result<(), String> {
+    let result = stream_to_file(app, name, asset, dest).await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(dest).await;
+    }
+    result
 }
 
-async fn download_with_progress(
-    app: &AppHandle,
-    name: &str,
-    url: &str,
-    expected_size: u64,
-    dest: &PathBuf,
-) -> Result<(), String> {
+async fn stream_to_file(app: &AppHandle, name: &str, asset: &GhAsset, dest: &Path) -> Result<(), String> {
+    let url = &asset.browser_download_url;
     let client = http_client(&app_proxy(app))?;
     let resp = client
         .get(url)
@@ -539,225 +605,281 @@ async fn download_with_progress(
     if !resp.status().is_success() {
         return Err(format!("download of {url} failed: HTTP {}", resp.status()));
     }
-    let total = resp.content_length().unwrap_or(expected_size);
-    let tmp = dest.with_extension("part");
-    let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+    let total = resp.content_length().unwrap_or(asset.size);
+    let mut file = tokio::fs::File::create(dest).await.map_err(|e| e.to_string())?;
     let mut stream = resp.bytes_stream();
     let mut downloaded: u64 = 0;
     let mut last_emit = std::time::Instant::now();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
+        let chunk = chunk.map_err(|e| format!("download of {url} failed: {e}"))?;
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
         downloaded += chunk.len() as u64;
-        if last_emit.elapsed().as_millis() > 150 {
+        if last_emit.elapsed() > Duration::from_millis(150) {
             last_emit = std::time::Instant::now();
-            emit_progress(
-                app,
-                BinaryProgress {
-                    name: name.into(),
-                    phase: "downloading".into(),
-                    downloaded,
-                    total,
-                    message: None,
-                },
-            );
+            emit_progress(app, name, "downloading", downloaded, total, None);
         }
     }
-    drop(file);
-    // Replace any existing file.
-    let _ = std::fs::remove_file(dest);
-    std::fs::rename(&tmp, dest).map_err(|e| e.to_string())?;
+    file.flush().await.map_err(|e| e.to_string())?;
+    if total > 0 && downloaded != total {
+        return Err(format!(
+            "download of {url} was cut short ({downloaded} of {total} bytes)"
+        ));
+    }
     Ok(())
 }
 
 pub async fn install(app: &AppHandle, name: &str, version: Option<&str>) -> Result<(), String> {
     let result = install_inner(app, name, version).await;
     match &result {
-        Ok(()) => emit_progress(
-            app,
-            BinaryProgress {
-                name: name.into(),
-                phase: "done".into(),
-                downloaded: 0,
-                total: 0,
-                message: None,
-            },
-        ),
-        Err(e) => emit_progress(
-            app,
-            BinaryProgress {
-                name: name.into(),
-                phase: "error".into(),
-                downloaded: 0,
-                total: 0,
-                message: Some(e.clone()),
-            },
-        ),
+        Ok(()) => emit_progress(app, name, "done", 0, 0, None),
+        Err(e) => emit_progress(app, name, "error", 0, 0, Some(e.clone())),
     }
     result
 }
 
-async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Result<(), String> {
-    let dir = bin_dir(app)?;
-    backup_current(app, name)?;
-    let proxy = app_proxy(app);
-    let release = match version {
-        Some(tag) => release_by_tag(repo_for(name)?, tag, &proxy).await?,
-        None => latest_release(repo_for(name)?, &proxy).await?,
+/// The asset a component installs from, for this platform.
+fn pick_asset<'a>(name: &str, release: &'a GhRelease) -> Result<&'a GhAsset, String> {
+    let find = |pred: &dyn Fn(&str) -> bool| release.assets.iter().find(|a| pred(&a.name));
+    let asset = match name {
+        YTDLP => find(&|n| n == YTDLP_ASSET),
+        GALLERYDL => find(&|n| n == GALLERYDL_ASSET),
+        DENO => find(&|n| n == DENO_ASSET),
+        FFMPEG => find(&|n| n == "ffmpeg-master-latest-win64-gpl.zip")
+            .or_else(|| find(&|n| n.contains("master") && n.ends_with("win64-gpl.zip")))
+            .or_else(|| find(&|n| n.ends_with("win64-gpl.zip"))),
+        other => return Err(format!("Unknown binary: {other}")),
     };
-    match name {
-        YTDLP | GALLERYDL => {
-            let (wanted, exe) = if name == GALLERYDL {
-                (GALLERYDL_ASSET, exe_name(GALLERYDL))
-            } else {
-                (YTDLP_ASSET, exe_name(YTDLP))
-            };
-            let asset = release
-                .assets
-                .iter()
-                .find(|a| a.name == wanted)
-                .ok_or_else(|| format!("{wanted} asset not found in this release"))?;
-            let dest = dir.join(exe);
-            download_with_progress(app, name, &asset.browser_download_url, asset.size, &dest)
-                .await?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
-                    .map_err(|e| e.to_string())?;
-            }
-            Ok(())
-        }
-        DENO => {
-            let asset = release
-                .assets
-                .iter()
-                .find(|a| a.name == DENO_ASSET)
-                .ok_or_else(|| format!("{DENO_ASSET} not found in this release"))?;
-            let zip_path = dir.join("deno-download.zip");
-            download_with_progress(app, name, &asset.browser_download_url, asset.size, &zip_path)
-                .await?;
+    asset.ok_or_else(|| {
+        format!(
+            "Release {} of {name} has no build for this platform",
+            release.tag_name
+        )
+    })
+}
 
-            emit_progress(
-                app,
-                BinaryProgress {
-                    name: name.into(),
-                    phase: "extracting".into(),
-                    downloaded: 0,
-                    total: 0,
-                    message: None,
-                },
-            );
-
-            let dest = dir.join(exe_name(DENO));
-            let zip2 = zip_path.clone();
-            let dest2 = dest.clone();
-            tokio::task::spawn_blocking(move || extract_named(&zip2, &exe_name(DENO), &dest2))
-                .await
-                .map_err(|e| e.to_string())??;
-            let _ = std::fs::remove_file(&zip_path);
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
-                    .map_err(|e| e.to_string())?;
-            }
-            Ok(())
-        }
-        #[cfg(not(windows))]
-        FFMPEG => Err(
-            "Automatic FFmpeg install is only available on Windows. Install it with \
-             Homebrew (`brew install ffmpeg`) — MediaFetch will detect it automatically."
-                .to_string(),
-        ),
-        #[cfg(windows)]
-        FFMPEG => {
-            let asset = release
-                .assets
-                .iter()
-                .find(|a| a.name == "ffmpeg-master-latest-win64-gpl.zip")
-                .or_else(|| {
-                    release
-                        .assets
-                        .iter()
-                        .find(|a| a.name.contains("master") && a.name.ends_with("win64-gpl.zip"))
-                })
-                .or_else(|| {
-                    release
-                        .assets
-                        .iter()
-                        .find(|a| a.name.ends_with("win64-gpl.zip"))
-                })
-                .ok_or("No win64-gpl FFmpeg build found in this release")?;
-            let zip_path = dir.join("ffmpeg-download.zip");
-            download_with_progress(app, name, &asset.browser_download_url, asset.size, &zip_path)
-                .await?;
-
-            emit_progress(
-                app,
-                BinaryProgress {
-                    name: name.into(),
-                    phase: "extracting".into(),
-                    downloaded: 0,
-                    total: 0,
-                    message: None,
-                },
-            );
-
-            let dir2 = dir.clone();
-            let zip2 = zip_path.clone();
-            tokio::task::spawn_blocking(move || extract_ffmpeg(&zip2, &dir2))
-                .await
-                .map_err(|e| e.to_string())??;
-
-            let _ = std::fs::remove_file(&zip_path);
-            std::fs::write(dir.join("ffmpeg.tag"), &release.tag_name)
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        }
-        other => Err(format!("Unknown binary: {other}")),
+/// Scratch files an interrupted install of `name` can leave in the bin dir —
+/// both this version's names and the older `<name>.part` ones.
+fn remove_leftovers(dir: &Path, name: &str) {
+    let mut stale = vec![
+        format!("{name}-download.part"),
+        format!("{name}.part"),
+        format!("{name}-download.zip"),
+    ];
+    for f in component_files(name) {
+        stale.push(format!("{f}.new"));
+        stale.push(format!("{f}.old"));
+    }
+    for f in stale {
+        let _ = std::fs::remove_file(dir.join(f));
     }
 }
 
-/// Pull a single named file out of a zip, wherever it sits inside it.
-fn extract_named(zip_path: &PathBuf, wanted: &str, dest: &PathBuf) -> Result<(), String> {
+async fn install_inner(app: &AppHandle, name: &str, version: Option<&str>) -> Result<(), String> {
+    if cfg!(not(windows)) && name == FFMPEG {
+        return Err(
+            "Automatic FFmpeg install is only available on Windows. Install it with \
+             Homebrew (`brew install ffmpeg`) — MediaFetch will detect it automatically."
+                .to_string(),
+        );
+    }
+    let repo = component(name)?.release_repo;
+    let dir = bin_dir(app)?;
+    remove_leftovers(&dir, name);
+
+    let proxy = app_proxy(app);
+    let release = match version {
+        Some(tag) => release_by_tag(repo, tag, &proxy).await?,
+        None => latest_release(repo, &proxy).await?,
+    };
+    let asset = pick_asset(name, &release)?;
+    let download = dir.join(format!("{name}-download.part"));
+    download_to(app, name, asset, &download).await?;
+
+    // Only now that the new build is safely on disk does the current one move
+    // to the rollback slot. Backing up first meant a failed download replaced
+    // the rollback copy with the very version it was there to preserve.
+    if let Err(e) = backup_current(app, name) {
+        let _ = std::fs::remove_file(&download);
+        return Err(e);
+    }
+
+    if asset.name.ends_with(".zip") {
+        emit_progress(app, name, "extracting", 0, 0, None);
+    }
+    let placed = {
+        let (download, dir, name, zipped) =
+            (download.clone(), dir.clone(), name.to_string(), asset.name.ends_with(".zip"));
+        tokio::task::spawn_blocking(move || place(&name, &download, &dir, zipped))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r)
+    };
+    let _ = std::fs::remove_file(&download);
+    placed?;
+
+    if name == FFMPEG {
+        std::fs::write(dir.join(FFMPEG_TAG_FILE), build_id(name, &release))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Move a downloaded build into place: a bare executable as-is, a zip by
+/// extracting the component's executables from it.
+fn place(name: &str, download: &Path, dir: &Path, zipped: bool) -> Result<(), String> {
+    let exes: Vec<String> = component_files(name)
+        .into_iter()
+        .filter(|f| f.as_str() != FFMPEG_TAG_FILE)
+        .collect();
+    if zipped {
+        extract_files(download, dir, &exes)?;
+    } else {
+        replace_file(download, &dir.join(&exes[0]))?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for exe in &exes {
+            let path = dir.join(exe);
+            if path.is_file() {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Move `src` over `dest`. Windows refuses to overwrite an executable that is
+/// running — a download still using yt-dlp or ffmpeg — but does allow
+/// renaming it, so the running copy is moved aside first; it's cleaned up by
+/// the next install (`remove_leftovers`).
+fn replace_file(src: &Path, dest: &Path) -> Result<(), String> {
+    if std::fs::rename(src, dest).is_ok() {
+        return Ok(());
+    }
+    let mut aside = dest.as_os_str().to_owned();
+    aside.push(".old");
+    let aside = PathBuf::from(aside);
+    let _ = std::fs::remove_file(&aside);
+    if dest.exists() {
+        std::fs::rename(dest, &aside).map_err(|e| {
+            format!("Could not replace {} (is it in use?): {e}", dest.display())
+        })?;
+    }
+    std::fs::rename(src, dest).map_err(|e| e.to_string())
+}
+
+/// Extract the named files from a zip into `dir`, wherever they sit inside
+/// it. The first name is required; the rest (ffprobe) are taken if present.
+fn extract_files(zip_path: &Path, dir: &Path, wanted: &[String]) -> Result<(), String> {
     let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let mut found = vec![false; wanted.len()];
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
         let entry_name = entry.name().replace('\\', "/");
         let base = entry_name.rsplit('/').next().unwrap_or(&entry_name);
-        if base == wanted {
-            let mut out = std::fs::File::create(dest).map_err(|e| e.to_string())?;
-            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
-            return Ok(());
+        let Some(slot) = wanted.iter().position(|w| w == base) else {
+            continue;
+        };
+        if found[slot] {
+            continue;
         }
-    }
-    Err(format!("{wanted} not found inside the downloaded archive"))
-}
-
-#[cfg(windows)]
-fn extract_ffmpeg(zip_path: &PathBuf, dest_dir: &std::path::Path) -> Result<(), String> {
-    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-    let wanted = ["ffmpeg.exe", "ffprobe.exe"];
-    let mut extracted = 0;
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        let entry_name = entry.name().replace('\\', "/");
-        if let Some(fname) = wanted
-            .iter()
-            .find(|w| entry_name.ends_with(&format!("bin/{w}")))
+        let dest = dir.join(&wanted[slot]);
+        let mut staged = dest.as_os_str().to_owned();
+        staged.push(".new");
+        let staged = PathBuf::from(staged);
         {
-            let out_path = dest_dir.join(fname);
-            let mut out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
+            let mut out = std::fs::File::create(&staged).map_err(|e| e.to_string())?;
             std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
-            extracted += 1;
         }
+        replace_file(&staged, &dest)?;
+        found[slot] = true;
     }
-    if extracted == 0 {
-        return Err("ffmpeg.exe not found inside the downloaded archive".into());
+    if !found[0] {
+        return Err(format!("{} not found inside the downloaded archive", wanted[0]));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release(tag: &str, name: Option<&str>, published_at: Option<&str>) -> GhRelease {
+        GhRelease {
+            tag_name: tag.into(),
+            name: name.map(String::from),
+            published_at: published_at.map(String::from),
+            assets: Vec::new(),
+            prerelease: false,
+            draft: false,
+        }
+    }
+
+    #[test]
+    fn ffmpeg_latest_resolves_to_its_dated_build() {
+        let r = release("latest", Some("Latest Auto-Build (2026-10-06 13:06)"), None);
+        assert_eq!(build_id(FFMPEG, &r), "autobuild-2026-10-06-13-06");
+    }
+
+    #[test]
+    fn ffmpeg_latest_without_a_stamp_falls_back_to_the_publish_time() {
+        let r = release("latest", Some("Latest"), Some("2026-10-06T13:28:21Z"));
+        assert_eq!(build_id(FFMPEG, &r), "latest-2026-10-06T13:28:21Z");
+    }
+
+    #[test]
+    fn other_releases_are_identified_by_tag() {
+        let r = release("2026.08.19", Some("yt-dlp 2026.08.19"), None);
+        assert_eq!(build_id(YTDLP, &r), "2026.08.19");
+        let r = release("autobuild-2026-10-05-13-07", Some("Auto-Build 2026-10-05 13:07"), None);
+        assert_eq!(build_id(FFMPEG, &r), "autobuild-2026-10-05-13-07");
+    }
+
+    #[test]
+    fn versions_are_reduced_to_what_release_tags_use() {
+        assert_eq!(
+            parse_version(DENO, "deno 2.9.7 (stable, release, x86_64-pc-windows-msvc)"),
+            "2.9.7"
+        );
+        assert_eq!(
+            parse_version(FFMPEG, "ffmpeg version N-125478-gc6498178bb-20260706 Copyright (c)"),
+            "N-125478-gc6498178bb-20260706"
+        );
+        assert_eq!(parse_version(YTDLP, "2026.08.19"), "2026.08.19");
+    }
+
+    fn local(current: &str, managed: bool, build: Option<&str>) -> LocalStatus {
+        LocalStatus {
+            resolved: Some((PathBuf::from("x"), managed)),
+            current: Some(current.into()),
+            previous: None,
+            installed_build: build.map(String::from),
+        }
+    }
+
+    #[test]
+    fn an_old_ffmpeg_latest_tag_now_reports_an_update() {
+        // Installs made before build ids recorded the literal "latest".
+        let l = local("N-1", true, Some("latest"));
+        assert!(update_available(FFMPEG, &l, "autobuild-2026-10-06-13-06"));
+        let l = local("N-1", true, Some("autobuild-2026-10-06-13-06"));
+        assert!(!update_available(FFMPEG, &l, "autobuild-2026-10-06-13-06"));
+    }
+
+    #[test]
+    fn an_unmanaged_ffmpeg_is_never_offered_an_update() {
+        let l = local("N-1", false, None);
+        assert!(!update_available(FFMPEG, &l, "autobuild-2026-10-06-13-06"));
+    }
+
+    #[test]
+    fn gallery_dl_and_deno_compare_against_their_tag_formats() {
+        assert!(!update_available(GALLERYDL, &local("1.32.9-dev:2026.10.06", true, None), "2026.10.06"));
+        assert!(update_available(GALLERYDL, &local("1.32.9-dev:2026.07.28", true, None), "2026.10.06"));
+        assert!(!update_available(DENO, &local("2.9.7", true, None), "v2.9.7"));
+        assert!(update_available(DENO, &local("2.9.6", true, None), "v2.9.7"));
+    }
 }

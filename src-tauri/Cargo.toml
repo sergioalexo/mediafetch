@@ -17,15 +17,21 @@ tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "io-util", "time", "sync", "macros", "fs"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots"] }
+# Same reqwest/rustls stack tauri-plugin-updater already ships, so the app
+# carries one HTTP client and one TLS implementation instead of two. TLS roots
+# come from the OS store (rustls-platform-verifier), and the ring crypto
+# provider is installed once at startup in main().
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 futures-util = "0.3"
-zip = { version = "2", default-features = false, features = ["deflate", "deflate64"] }
+# zip 4 matches tauri-plugin-updater's; only extraction is needed.
+zip = { version = "4", default-features = false, features = ["deflate-flate2-zlib-rs", "deflate64"] }
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
-tauri-winrt-notification = "0.7"
+winreg = "0.56"
+tauri-winrt-notification = "0.8"
 
 [profile.release]
 panic = "abort"

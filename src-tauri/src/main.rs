@@ -4,6 +4,7 @@
 mod binaries;
 mod cookies;
 mod downloader;
+mod fsutil;
 mod history;
 mod metadata;
 mod notify;
@@ -11,11 +12,16 @@ mod settings;
 mod themes;
 mod types;
 
-use downloader::AppState;
+use downloader::{settings_snapshot, AppState};
 use settings::Settings;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use types::{now_unix, DownloadOptions, DownloadTask, HistoryEntry, TaskStatus};
+
+// A plain `fn` command runs on the main thread — the one that also drives the
+// window — so anything that spawns a process (taskkill, `yt-dlp --version`),
+// or reads/writes a file that can grow large (history), is marked
+// `#[tauri::command(async)]`, which runs it on a worker thread instead.
 
 // ---------- Settings ----------
 
@@ -56,11 +62,7 @@ async fn pick_cookies_file(app: AppHandle) -> Option<String> {
 /// otherwise the only symptom is a download failing much later.
 #[tauri::command]
 async fn test_cookies(app: AppHandle) -> cookies::CookieCheck {
-    let settings = {
-        let state = app.state::<AppState>();
-        let s = state.settings.lock().unwrap().clone();
-        s
-    };
+    let settings = settings_snapshot(&app);
     cookies::check(&app, &settings).await
 }
 
@@ -68,20 +70,16 @@ async fn test_cookies(app: AppHandle) -> cookies::CookieCheck {
 
 #[tauri::command]
 async fn analyze_url(app: AppHandle, url: String) -> Result<metadata::AnalyzeResult, String> {
-    let settings = {
-        let state = app.state::<AppState>();
-        let s = state.settings.lock().unwrap().clone();
-        s
-    };
+    let settings = settings_snapshot(&app);
     metadata::analyze(&app, &url, &settings).await
 }
 
 /// Preview the exact command line a download would run, without starting it —
 /// lets you sanity-check a preset (including custom args) before committing to
 /// a download. Shows whichever tool the task would actually use.
-#[tauri::command]
-fn preview_command(app: AppHandle, state: State<AppState>, options: DownloadOptions) -> Result<String, String> {
-    let settings = state.settings.lock().unwrap().clone();
+#[tauri::command(async)]
+fn preview_command(app: AppHandle, options: DownloadOptions) -> Result<String, String> {
+    let settings = settings_snapshot(&app);
     let gallery = downloader::is_gallery(&options);
     let tool = if gallery {
         binaries::gallerydl_path(&app)?
@@ -157,15 +155,9 @@ fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) 
             // Only a live task blocks a duplicate. A completed, failed or
             // cancelled one stays in the queue until restart, and re-adding
             // those is a deliberate re-download.
-            let duplicate = q.iter().any(|t| {
-                matches!(
-                    t.status,
-                    TaskStatus::Queued
-                        | TaskStatus::Downloading
-                        | TaskStatus::Postprocessing
-                        | TaskStatus::Paused
-                ) && same_request(&t.options, &opts)
-            });
+            let duplicate = q
+                .iter()
+                .any(|t| t.status.is_live() && same_request(&t.options, &opts));
             if duplicate {
                 skipped += 1;
                 continue;
@@ -190,7 +182,6 @@ fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) 
                 playlist_count: None,
                 retry_count: 0,
                 force_single_connection: false,
-                use_default_player_client: false,
                 media_key: None,
                 options: opts,
             });
@@ -201,15 +192,12 @@ fn enqueue(app: AppHandle, state: State<AppState>, items: Vec<DownloadOptions>) 
     skipped
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pause_task(app: AppHandle, state: State<AppState>, id: String) {
     let should_kill = {
         let mut q = state.queue.lock().unwrap();
         if let Some(t) = q.iter_mut().find(|t| t.id == id) {
-            let was_running = matches!(
-                t.status,
-                TaskStatus::Downloading | TaskStatus::Postprocessing
-            );
+            let was_running = t.status.is_running();
             if was_running || t.status == TaskStatus::Queued {
                 t.status = TaskStatus::Paused;
                 t.speed = 0.0;
@@ -241,16 +229,13 @@ fn resume_task(app: AppHandle, state: State<AppState>, id: String) {
     downloader::pump(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_task(app: AppHandle, state: State<AppState>, id: String) {
     let should_kill = {
         let mut q = state.queue.lock().unwrap();
         if let Some(t) = q.iter_mut().find(|t| t.id == id) {
-            let was_running = matches!(
-                t.status,
-                TaskStatus::Downloading | TaskStatus::Postprocessing
-            );
-            if !matches!(t.status, TaskStatus::Completed | TaskStatus::Failed) {
+            let was_running = t.status.is_running();
+            if t.status.is_live() {
                 t.status = TaskStatus::Cancelled;
                 t.speed = 0.0;
                 t.eta = 0.0;
@@ -267,16 +252,13 @@ fn cancel_task(app: AppHandle, state: State<AppState>, id: String) {
     downloader::pump(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pause_all_tasks(app: AppHandle, state: State<AppState>) {
     let running_ids: Vec<String> = {
         let mut q = state.queue.lock().unwrap();
         q.iter_mut()
             .filter_map(|t| {
-                let was_running = matches!(
-                    t.status,
-                    TaskStatus::Downloading | TaskStatus::Postprocessing
-                );
+                let was_running = t.status.is_running();
                 if was_running || t.status == TaskStatus::Queued {
                     t.status = TaskStatus::Paused;
                     t.speed = 0.0;
@@ -295,17 +277,14 @@ fn pause_all_tasks(app: AppHandle, state: State<AppState>) {
     downloader::pump(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_all_tasks(app: AppHandle, state: State<AppState>) {
     let running_ids: Vec<String> = {
         let mut q = state.queue.lock().unwrap();
         q.iter_mut()
             .filter_map(|t| {
-                let was_running = matches!(
-                    t.status,
-                    TaskStatus::Downloading | TaskStatus::Postprocessing
-                );
-                if !matches!(t.status, TaskStatus::Completed | TaskStatus::Failed) {
+                let was_running = t.status.is_running();
+                if t.status.is_live() {
                     t.status = TaskStatus::Cancelled;
                     t.speed = 0.0;
                     t.eta = 0.0;
@@ -338,7 +317,6 @@ fn retry_task(app: AppHandle, state: State<AppState>, id: String) {
                 t.completed_at = None;
                 t.retry_count = 0;
                 t.force_single_connection = false;
-                t.use_default_player_client = false;
             }
         }
     }
@@ -346,30 +324,18 @@ fn retry_task(app: AppHandle, state: State<AppState>, id: String) {
     downloader::pump(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_task(app: AppHandle, state: State<AppState>, id: String) {
+    // Dropping the task from the queue is what tells its exit handler not to
+    // record anything; the kill comes after, outside the lock.
     let was_running = {
-        let q = state.queue.lock().unwrap();
-        q.iter().any(|t| {
-            t.id == id
-                && matches!(
-                    t.status,
-                    TaskStatus::Downloading | TaskStatus::Postprocessing
-                )
-        })
+        let mut q = state.queue.lock().unwrap();
+        let was_running = q.iter().any(|t| t.id == id && t.status.is_running());
+        q.retain(|t| t.id != id);
+        was_running
     };
     if was_running {
-        // Mark cancelled first so the exit handler doesn't record a failure.
-        let mut q = state.queue.lock().unwrap();
-        if let Some(t) = q.iter_mut().find(|t| t.id == id) {
-            t.status = TaskStatus::Cancelled;
-        }
-        drop(q);
         downloader::kill_task_process(&app, &id);
-    }
-    {
-        let mut q = state.queue.lock().unwrap();
-        q.retain(|t| t.id != id);
     }
     downloader::clear_log(&app, &id);
     downloader::emit_queue(&app);
@@ -392,12 +358,7 @@ fn reorder_task(app: AppHandle, state: State<AppState>, id: String, new_index: u
 #[tauri::command]
 fn clear_finished(app: AppHandle, state: State<AppState>) {
     let mut q = state.queue.lock().unwrap();
-    let (finished, remaining): (Vec<_>, Vec<_>) = q.drain(..).partition(|t| {
-        matches!(
-            t.status,
-            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
-        )
-    });
+    let (finished, remaining): (Vec<_>, Vec<_>) = q.drain(..).partition(|t| !t.status.is_live());
     *q = remaining;
     drop(q);
     for t in finished {
@@ -408,41 +369,51 @@ fn clear_finished(app: AppHandle, state: State<AppState>) {
 
 // ---------- History ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_history(app: AppHandle) -> Vec<HistoryEntry> {
     history::load(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn clear_history(app: AppHandle) {
     history::clear(&app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_history_entry(app: AppHandle, id: String) {
     history::remove(&app, &id);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn export_history(app: AppHandle, path: String) -> Result<usize, String> {
     history::export(&app, &path)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn import_history(app: AppHandle, path: String) -> Result<history::ImportReport, String> {
     let report = history::import(&app, &path)?;
     downloader::emit_history_replaced(&app);
     Ok(report)
 }
 
-#[tauri::command]
-fn show_in_folder(path: String) -> Result<(), String> {
-    tauri_plugin_opener::reveal_item_in_dir(&path).map_err(|e| e.to_string())
+/// A file from history may have been moved or deleted since; say so plainly
+/// instead of surfacing the OS's "cannot find the path" error.
+fn existing_path(path: &str) -> Result<&str, String> {
+    if std::path::Path::new(path).exists() {
+        Ok(path)
+    } else {
+        Err(format!("The file is no longer there: {path}"))
+    }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+fn show_in_folder(path: String) -> Result<(), String> {
+    tauri_plugin_opener::reveal_item_in_dir(existing_path(&path)?).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 fn open_file(path: String) -> Result<(), String> {
-    tauri_plugin_opener::open_path(&path, None::<&str>).map_err(|e| e.to_string())
+    tauri_plugin_opener::open_path(existing_path(&path)?, None::<&str>).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -483,9 +454,9 @@ fn version_newer(latest: &str, current: &str) -> bool {
 }
 
 #[tauri::command]
-async fn check_app_update(app: AppHandle, state: State<'_, AppState>) -> Result<AppUpdateStatus, ()> {
+async fn check_app_update(app: AppHandle) -> Result<AppUpdateStatus, ()> {
     let current_version = app.package_info().version.to_string();
-    let proxy = state.settings.lock().unwrap().proxy.trim().to_string();
+    let proxy = binaries::app_proxy(&app);
     let latest_version = binaries::latest_release_tag(APP_REPO, &proxy)
         .await
         .ok()
@@ -517,7 +488,7 @@ struct Diagnostics {
 
 /// Snapshot of the local environment for a bug report. Deliberately limited to
 /// non-identifying info (versions, OS, CPU arch) — never paths, cookies or URLs.
-#[tauri::command]
+#[tauri::command(async)]
 fn collect_diagnostics(app: AppHandle) -> Diagnostics {
     Diagnostics {
         app_version: app.package_info().version.to_string(),
@@ -553,22 +524,27 @@ async fn list_binary_versions(app: AppHandle, name: String) -> Result<Vec<String
     binaries::list_versions(&app, &name).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rollback_binary(app: AppHandle, name: String) -> Result<(), String> {
     binaries::rollback(&app, &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn uninstall_binary(app: AppHandle, name: String) -> Result<(), String> {
     binaries::uninstall(&app, &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn reset_components(app: AppHandle) -> Result<(), String> {
     binaries::reset_all(&app)
 }
 
 fn main() {
+    // reqwest is built without a bundled TLS crypto provider (see
+    // Cargo.toml), so one has to be installed before the first request.
+    // tauri-plugin-updater installs this same one; whichever runs first wins.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -590,31 +566,39 @@ fn main() {
         })
         .setup(|app| {
             let handle = app.handle().clone();
-            notify::register_app_identity(&handle);
             let loaded = settings::load(&handle);
             let auto_update = loaded.auto_update_components;
             app.manage(AppState::new(loaded));
 
-            // Open the log book with the versions any bug report needs — and
-            // with whether a JS runtime was found, which decides whether
-            // YouTube extraction works at all.
-            downloader::push_log(
-                &handle,
-                "app",
-                format!(
-                    "MediaFetch {} on {} {} · yt-dlp {} · ffmpeg {} · JS runtime: {}",
-                    handle.package_info().version,
-                    std::env::consts::OS,
-                    std::env::consts::ARCH,
-                    binaries::tool_version(&handle, binaries::YTDLP)
-                        .unwrap_or_else(|| "not installed".into()),
-                    binaries::tool_version(&handle, binaries::FFMPEG)
-                        .unwrap_or_else(|| "not installed".into()),
-                    downloader::js_runtime_spec(&handle).unwrap_or_else(
-                        || "none — install Deno from Components, or YouTube formats may be missing".into(),
+            // Everything below spawns processes or touches the registry, so it
+            // runs in the background rather than holding the window back.
+            let startup = handle.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                notify::register_app_identity(&startup);
+                // Open the log book with the versions any bug report needs —
+                // and with whether a JS runtime was found, which decides
+                // whether YouTube extraction works at all.
+                downloader::push_log(
+                    &startup,
+                    "app",
+                    format!(
+                        "MediaFetch {} on {} {} · yt-dlp {} · ffmpeg {} · JS runtime: {}",
+                        startup.package_info().version,
+                        std::env::consts::OS,
+                        std::env::consts::ARCH,
+                        binaries::tool_version(&startup, binaries::YTDLP)
+                            .unwrap_or_else(|| "not installed".into()),
+                        binaries::tool_version(&startup, binaries::FFMPEG)
+                            .unwrap_or_else(|| "not installed".into()),
+                        downloader::js_runtime_spec(&startup).unwrap_or_else(
+                            || "none — install Deno from Components, or YouTube formats may be missing".into(),
+                        ),
                     ),
-                ),
-            );
+                );
+                // Warm the `yt-dlp --help` flag probe now, so the first
+                // download doesn't pay for it.
+                downloader::ytdlp_supports_js_runtimes(&startup);
+            });
 
             if auto_update {
                 let handle = handle.clone();

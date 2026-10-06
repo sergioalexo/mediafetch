@@ -128,8 +128,6 @@ export interface DownloadTask {
   retryCount: number;
   /** Set by auto-retry after a write failure: skip concurrent fragments. */
   forceSingleConnection: boolean;
-  /** Set by auto-retry after a 403/429: re-extract with yt-dlp's own player clients. */
-  useDefaultPlayerClient: boolean;
   /** Canonical "<extractor_key>:<id>", captured once yt-dlp finishes. */
   mediaKey?: string | null;
   options: DownloadOptions;

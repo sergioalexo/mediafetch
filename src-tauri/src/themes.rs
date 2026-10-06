@@ -125,7 +125,7 @@ fn slug_ok(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_themes(app: AppHandle) -> Result<Vec<Theme>, String> {
     let dir = themes_dir(&app)?;
     let mut themes = Vec::new();
@@ -147,7 +147,7 @@ pub fn list_themes(app: AppHandle) -> Result<Vec<Theme>, String> {
     Ok(themes)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_theme(app: AppHandle, theme: Theme) -> Result<(), String> {
     validate(&theme)?;
     if !slug_ok(&theme.id) {
@@ -155,10 +155,10 @@ pub fn save_theme(app: AppHandle, theme: Theme) -> Result<(), String> {
     }
     let path = themes_dir(&app)?.join(format!("{}.json", theme.id));
     let json = serde_json::to_string_pretty(&theme).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    crate::fsutil::write_atomic(&path, json.as_bytes()).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_theme(app: AppHandle, id: String) -> Result<(), String> {
     if !slug_ok(&id) {
         return Err("Invalid theme id".into());
@@ -170,7 +170,7 @@ pub fn delete_theme(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_theme(app: AppHandle, path: String) -> Result<Theme, String> {
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > 1024 * 1024 {
@@ -183,7 +183,7 @@ pub fn import_theme(app: AppHandle, path: String) -> Result<Theme, String> {
     Ok(theme)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_theme(app: AppHandle, id: String, path: String) -> Result<(), String> {
     if !slug_ok(&id) {
         return Err("Invalid theme id".into());
@@ -196,48 +196,55 @@ pub fn export_theme(app: AppHandle, id: String, path: String) -> Result<(), Stri
         .map_err(|e| e.to_string())
 }
 
-const COMMUNITY_INDEX_URL: &str =
-    "https://raw.githubusercontent.com/sergioalexo/mediafetch/main/themes/index.json";
+const COMMUNITY_BASE_URL: &str =
+    "https://raw.githubusercontent.com/sergioalexo/mediafetch/main/themes/";
+
+/// A catalog entry's file name: a plain `<slug>.json` in the themes folder,
+/// never a path that climbs out of it.
+fn community_file_ok(file: &str) -> bool {
+    file.strip_suffix(".json").is_some_and(slug_ok)
+}
 
 /// Fetch the community theme catalog (index + each listed file), validating
 /// every one before it's handed to the frontend. Offline or a bad response
-/// fails gracefully with an empty-ish error the UI can show as "couldn't
-/// reach the theme gallery" rather than crashing.
+/// fails gracefully with an error the UI can show as "couldn't reach the
+/// theme gallery" rather than crashing; one broken file is just skipped.
 #[tauri::command]
 pub async fn fetch_community_themes(app: AppHandle) -> Result<Vec<Theme>, String> {
-    let proxy = crate::binaries::app_proxy(&app);
-    let index_text = crate::binaries::http_client(&proxy)?
-        .get(COMMUNITY_INDEX_URL)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
+    let client = crate::binaries::http_client(&crate::binaries::app_proxy(&app))?;
+    let fetch = |url: String| {
+        let client = client.clone();
+        async move {
+            client
+                .get(url)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status)?
+                .text()
+                .await
+        }
+    };
+
+    let index_text = fetch(format!("{COMMUNITY_BASE_URL}index.json"))
         .await
-        .map_err(|e| format!("Couldn't reach the theme gallery: {e}"))?
-        .error_for_status()
-        .map_err(|e| format!("Couldn't reach the theme gallery: {e}"))?
-        .text()
-        .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("Couldn't reach the theme gallery: {e}"))?;
     let entries: Vec<CommunityTheme> =
         serde_json::from_str(&index_text).map_err(|e| e.to_string())?;
 
-    let mut themes = Vec::new();
-    for entry in entries {
-        let url = format!(
-            "https://raw.githubusercontent.com/sergioalexo/mediafetch/main/themes/{}",
-            entry.file
-        );
-        let Ok(client) = crate::binaries::http_client(&proxy) else { continue };
-        let Ok(resp) = client.get(&url).timeout(std::time::Duration::from_secs(10)).send().await
-        else {
-            continue;
-        };
-        let Ok(text) = resp.text().await else { continue };
-        let Ok(theme) = serde_json::from_str::<Theme>(&text) else { continue };
-        if validate(&theme).is_ok() {
-            themes.push(theme);
-        }
-    }
-    Ok(themes)
+    // All files at once rather than one round trip after another.
+    let files = futures_util::future::join_all(
+        entries
+            .iter()
+            .filter(|e| community_file_ok(&e.file))
+            .map(|e| fetch(format!("{COMMUNITY_BASE_URL}{}", e.file))),
+    )
+    .await;
+    Ok(files
+        .into_iter()
+        .filter_map(|text| serde_json::from_str::<Theme>(&text.ok()?).ok())
+        .filter(|theme| validate(theme).is_ok())
+        .collect())
 }
 
 #[cfg(test)]
@@ -317,6 +324,14 @@ mod tests {
         let mut theme = base_theme();
         theme.format = 2;
         assert!(validate(&theme).is_err());
+    }
+
+    #[test]
+    fn community_file_names_stay_inside_the_themes_folder() {
+        assert!(community_file_ok("midnight-teal.json"));
+        assert!(!community_file_ok("../settings.json"));
+        assert!(!community_file_ok("a/b.json"));
+        assert!(!community_file_ok("midnight-teal.css"));
     }
 
     #[test]

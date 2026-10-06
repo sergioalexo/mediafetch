@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
+use crate::fsutil::write_atomic;
 use crate::types::{now_unix, HistoryEntry};
 
 /// Reject an import file bigger than this outright — a malformed or hostile
@@ -44,25 +45,23 @@ const MAX_COMPLETED_ENTRIES: usize = 100_000;
 
 /// Apply the retention caps, keeping the newest of each bucket.
 fn apply_retention(entries: &mut Vec<HistoryEntry>) {
+    retain_newest(entries, MAX_FAILED_ENTRIES, MAX_COMPLETED_ENTRIES);
+}
+
+/// Sort newest first, then keep at most `max_failed` failed and
+/// `max_completed` completed entries.
+fn retain_newest(entries: &mut Vec<HistoryEntry>, max_failed: usize, max_completed: usize) {
     entries.sort_by_key(|e| std::cmp::Reverse(e.downloaded_at));
-    let mut kept: Vec<HistoryEntry> = Vec::with_capacity(entries.len());
-    let mut completed = 0usize;
-    let mut failed = 0usize;
-    for e in entries.drain(..) {
-        if e.status == "failed" {
-            if failed >= MAX_FAILED_ENTRIES {
-                continue;
-            }
-            failed += 1;
+    let (mut failed, mut completed) = (0usize, 0usize);
+    entries.retain(|e| {
+        let (count, max) = if e.status == "failed" {
+            (&mut failed, max_failed)
         } else {
-            if completed >= MAX_COMPLETED_ENTRIES {
-                continue;
-            }
-            completed += 1;
-        }
-        kept.push(e);
-    }
-    *entries = kept;
+            (&mut completed, max_completed)
+        };
+        *count += 1;
+        *count <= max
+    });
 }
 
 /// True when two entries refer to the same piece of media: the same canonical
@@ -94,8 +93,6 @@ pub fn load(app: &AppHandle) -> Vec<HistoryEntry> {
     read_unlocked(app)
 }
 
-/// Write via a temporary file and rename, so an interrupted write leaves the
-/// previous history intact instead of a half-written file that parses as empty.
 fn save(app: &AppHandle, entries: &[HistoryEntry]) {
     let Ok(path) = history_path(app) else {
         return;
@@ -103,18 +100,7 @@ fn save(app: &AppHandle, entries: &[HistoryEntry]) {
     let Ok(json) = serde_json::to_string(entries) else {
         return;
     };
-    let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, json).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-        return;
-    }
-    // std::fs::rename replaces the destination on every platform we ship
-    // (MoveFileEx with MOVEFILE_REPLACE_EXISTING on Windows), so the old file
-    // stays readable right up to the swap. On failure the previous history is
-    // still on disk untouched — only the temp file needs clearing.
-    if std::fs::rename(&tmp, &path).is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
+    let _ = write_atomic(&path, json.as_bytes());
 }
 
 /// Read-modify-write the history under one lock.
@@ -127,9 +113,6 @@ fn update<F: FnOnce(&mut Vec<HistoryEntry>)>(app: &AppHandle, f: F) {
 
 pub fn add(app: &AppHandle, entry: HistoryEntry) {
     update(app, |entries| {
-        // A later success replaces an earlier failure for the same media —
-        // a track that failed, then was retried by hand and succeeded, should
-        // leave one completed entry, not two with the same id.
         merge_one(entries, entry);
         apply_retention(entries);
     });
@@ -143,12 +126,17 @@ pub fn clear(app: &AppHandle) {
     update(app, |entries| entries.clear());
 }
 
-/// Apply the completed-replaces-failed merge rule to an already-loaded list,
-/// without touching disk. Shared by `add` (one entry) and `import` (many).
+/// Add one entry to an already-loaded list, without touching disk. Shared by
+/// `add` (one entry) and `import` (many); src/lib/history.ts mirrors it so the
+/// UI's copy stays identical to the file.
+///
+/// The newest outcome for a piece of media supersedes an earlier *failure*
+/// of it: a success clears it, and a repeat failure replaces it rather than
+/// stacking up. An entry with the same id is the same task's earlier outcome
+/// (a manual retry reuses the id), so it is replaced too — two entries can
+/// never share an id. A completed entry is never removed by a later failure.
 pub fn merge_one(entries: &mut Vec<HistoryEntry>, entry: HistoryEntry) {
-    if entry.status == "completed" {
-        entries.retain(|e| !(e.status == "failed" && same_media(e, &entry)));
-    }
+    entries.retain(|e| e.id != entry.id && !(e.status == "failed" && same_media(e, &entry)));
     entries.insert(0, entry);
 }
 
@@ -164,11 +152,12 @@ fn merge_import(entries: &mut Vec<HistoryEntry>, incoming: Vec<HistoryEntry>) ->
             continue;
         }
         let dup_by_id = entries.iter().any(|e| e.id == entry.id);
-        let dup_completed = entry.status == "completed"
-            && entries
-                .iter()
-                .any(|e| e.status == "completed" && same_media(e, &entry));
-        if dup_by_id || dup_completed {
+        // A completed entry is a duplicate of another completed one for the
+        // same media; a failure adds nothing once the media has any entry.
+        let dup_media = entries.iter().any(|e| {
+            same_media(e, &entry) && (entry.status == "failed" || e.status == "completed")
+        });
+        if dup_by_id || dup_media {
             report.skipped += 1;
             continue;
         }
@@ -256,7 +245,7 @@ pub fn import(app: &AppHandle, path: &str) -> Result<ImportReport, String> {
             report.archive_added = lines.len().saturating_sub(before);
             if report.archive_added > 0 {
                 let joined = lines.into_iter().collect::<Vec<_>>().join("\n");
-                let _ = std::fs::write(&path, joined + "\n");
+                let _ = write_atomic(&path, (joined + "\n").as_bytes());
             }
         }
     }
@@ -311,6 +300,42 @@ mod tests {
     }
 
     #[test]
+    fn a_repeat_failure_replaces_the_earlier_one() {
+        let mut entries = vec![entry("1", "https://x.com/a", "failed", Some("X:a"), 1)];
+        merge_one(&mut entries, entry("1", "https://x.com/a", "failed", Some("X:a"), 2));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].downloaded_at, 2);
+    }
+
+    #[test]
+    fn a_failure_never_removes_a_completed_entry() {
+        let mut entries = vec![entry("1", "https://x.com/a", "completed", Some("X:a"), 1)];
+        merge_one(&mut entries, entry("2", "https://x.com/a", "failed", Some("X:a"), 2));
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|e| e.status == "completed"));
+    }
+
+    #[test]
+    fn ids_stay_unique() {
+        let mut entries = vec![entry("1", "https://x.com/a", "failed", None, 1)];
+        merge_one(&mut entries, entry("1", "https://x.com/b", "failed", None, 2));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, "https://x.com/b");
+    }
+
+    #[test]
+    fn import_skips_a_failure_for_media_already_in_history() {
+        let mut entries = vec![entry("1", "https://x.com/a", "completed", Some("X:a"), 1)];
+        let report = merge_import(
+            &mut entries,
+            vec![entry("2", "https://x.com/a", "failed", Some("X:a"), 5)],
+        );
+        assert_eq!(report.added, 0);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
     fn completed_does_not_remove_unrelated_failures() {
         let mut entries = vec![entry("1", "https://x.com/a", "failed", Some("X:a"), 1)];
         merge_one(&mut entries, entry("2", "https://x.com/b", "completed", Some("X:b"), 2));
@@ -325,28 +350,13 @@ mod tests {
                 (10..15).map(|i| entry(&i.to_string(), "https://x.com", "completed", None, i as u64)),
             )
             .collect();
-        // Shrink the caps for the test instead of generating thousands of rows.
-        entries.sort_by_key(|e| std::cmp::Reverse(e.downloaded_at));
-        let mut kept = Vec::new();
-        let (mut completed, mut failed) = (0usize, 0usize);
-        for e in entries.drain(..) {
-            if e.status == "failed" {
-                if failed >= 3 {
-                    continue;
-                }
-                failed += 1;
-            } else {
-                if completed >= 2 {
-                    continue;
-                }
-                completed += 1;
-            }
-            kept.push(e);
-        }
-        assert_eq!(kept.iter().filter(|e| e.status == "failed").count(), 3);
-        assert_eq!(kept.iter().filter(|e| e.status == "completed").count(), 2);
+        // Small caps instead of generating thousands of rows.
+        retain_newest(&mut entries, 3, 2);
+        assert_eq!(entries.iter().filter(|e| e.status == "failed").count(), 3);
+        assert_eq!(entries.iter().filter(|e| e.status == "completed").count(), 2);
         // Newest kept, within each bucket.
-        assert_eq!(kept.iter().find(|e| e.status == "completed").unwrap().id, "14");
+        assert_eq!(entries.iter().find(|e| e.status == "completed").unwrap().id, "14");
+        assert_eq!(entries.iter().find(|e| e.status == "failed").unwrap().id, "9");
     }
 
     #[test]

@@ -12,6 +12,18 @@ pub enum TaskStatus {
     Cancelled,
 }
 
+impl TaskStatus {
+    /// Owns a process and one of the parallel-download slots.
+    pub fn is_running(self) -> bool {
+        matches!(self, Self::Downloading | Self::Postprocessing)
+    }
+
+    /// Still going to produce something: running, waiting its turn, or paused.
+    pub fn is_live(self) -> bool {
+        self.is_running() || matches!(self, Self::Queued | Self::Paused)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataOverrides {
@@ -117,11 +129,6 @@ pub struct DownloadTask {
     /// fragment threads each) are a likely trigger.
     #[serde(default)]
     pub force_single_connection: bool,
-    /// Set by an auto-retry after the server refused the media URL (403/429):
-    /// re-extract through yt-dlp's own player clients rather than the pinned
-    /// ones, so this attempt gets URLs that haven't already been rejected.
-    #[serde(default)]
-    pub use_default_player_client: bool,
     /// Canonical `"<extractor_key>:<id>"`, captured from yt-dlp's own
     /// `after_move` print once the run finishes (see MFDONE in downloader.rs).
     #[serde(default)]

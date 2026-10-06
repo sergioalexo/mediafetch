@@ -2,7 +2,7 @@
 //! enforces the parallel-download limit and drives pause/resume/retry.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -260,10 +260,10 @@ fn task_status(app: &AppHandle, id: &str) -> Option<TaskStatus> {
     q.iter().find(|t| t.id == id).map(|t| t.status)
 }
 
-fn current_task(app: &AppHandle, id: &str) -> Option<DownloadTask> {
-    let state = app.state::<AppState>();
-    let q = state.queue.lock().unwrap();
-    q.iter().find(|t| t.id == id).cloned()
+/// A copy of the current settings, taken without holding the lock across
+/// whatever the caller does next (an `.await`, a process spawn).
+pub fn settings_snapshot(app: &AppHandle) -> Settings {
+    app.state::<AppState>().settings.lock().unwrap().clone()
 }
 
 #[cfg(windows)]
@@ -298,35 +298,33 @@ pub fn kill_tree(pid: u32) {
 /// on PATH, where they do work.
 const ENCODING_ARGS: [&str; 2] = ["--encoding", "utf-8"];
 
-/// The pinned YouTube player client, and the JS runtime yt-dlp needs to make
-/// any of them work. Shared by downloads and analysis — when the two disagree,
-/// analysis rejects links the downloader could have fetched perfectly well.
-///
-/// Prefer "android_vr": as of mid-2026 the web-family clients return zero
-/// playable formats for otherwise-normal videos (surfacing as "Requested
-/// format is not available") once YouTube's bot/PO-token checks kick in, while
-/// android_vr still serves full format lists without a token. "web" stays as a
-/// fallback so cookie-gated (private/members-only) videos, which android_vr
-/// can't authenticate for, still resolve.
-pub fn youtube_extractor_args(app: &AppHandle) -> Vec<String> {
-    let mut args = vec![
-        "--extractor-args".into(),
-        "youtube:player_client=android_vr,web".into(),
-    ];
-    args.extend(js_runtime_args(app));
-    args
-}
-
 /// yt-dlp solves YouTube's signature and `n` challenges with a JavaScript
 /// runtime, and only enables Deno by default. Without one, most player clients
 /// hand back storyboard images and nothing else. If Deno is missing but
 /// another supported runtime is installed, point yt-dlp at it explicitly — GUI
 /// apps don't inherit a login shell's PATH, so the full path goes along.
+///
+/// Which YouTube player clients to use is deliberately left to yt-dlp. A
+/// client pinned here goes stale the day YouTube changes something: the
+/// android_vr pin this app used to carry started getting every format 403'd
+/// on 2026-08-17, while yt-dlp simply dropped it from its maintained defaults.
+/// yt-dlp is kept current by the Components page, so its defaults are the
+/// ones that keep working. Shared by downloads, analysis and the bitrate probe.
 pub fn js_runtime_args(app: &AppHandle) -> Vec<String> {
     match js_runtime_spec(app) {
         Some(spec) if ytdlp_supports_js_runtimes(app) => vec!["--js-runtimes".into(), spec],
         _ => Vec::new(),
     }
+}
+
+/// [`js_runtime_args`] from async code. Resolving it can block — the first
+/// call after a yt-dlp install or update runs `yt-dlp --help` — so it goes to
+/// the blocking pool instead of stalling an async worker.
+pub async fn js_runtime_args_async(app: &AppHandle) -> Vec<String> {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || js_runtime_args(&app))
+        .await
+        .unwrap_or_default()
 }
 
 /// The runtime to hand yt-dlp, as `name:path`. Deno first (yt-dlp's own
@@ -348,7 +346,7 @@ pub fn js_runtime_spec(app: &AppHandle) -> Option<String> {
 /// mtime), so an install or rollback re-checks by itself.
 type FileStamp = (u64, u64);
 
-fn ytdlp_supports_js_runtimes(app: &AppHandle) -> bool {
+pub fn ytdlp_supports_js_runtimes(app: &AppHandle) -> bool {
     static CACHE: OnceLock<Mutex<Option<(FileStamp, bool)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(None));
 
@@ -387,15 +385,7 @@ fn ytdlp_supports_js_runtimes(app: &AppHandle) -> bool {
     supported
 }
 
-/// True when a failure looks like YouTube handed back an empty format list —
-/// worth one more go through different player clients.
-pub fn is_no_formats_error(text: &str) -> bool {
-    text.contains("Requested format is not available")
-        || text.contains("Only images are available")
-        || text.contains("Failed to extract any player response")
-}
-
-fn force_utf8_io(cmd: &mut tokio::process::Command) {
+pub fn force_utf8_io(cmd: &mut tokio::process::Command) {
     cmd.env("PYTHONUTF8", "1");
     cmd.env("PYTHONIOENCODING", "utf-8");
 }
@@ -446,15 +436,7 @@ pub fn pump(app: &AppHandle) {
     let mut to_start = Vec::new();
     {
         let mut q = state.queue.lock().unwrap();
-        let running = q
-            .iter()
-            .filter(|t| {
-                matches!(
-                    t.status,
-                    TaskStatus::Downloading | TaskStatus::Postprocessing
-                )
-            })
-            .count() as u32;
+        let running = q.iter().filter(|t| t.status.is_running()).count() as u32;
         let mut slots = max_parallel.saturating_sub(running);
         for t in q.iter_mut() {
             if slots == 0 {
@@ -488,9 +470,37 @@ pub fn pump(app: &AppHandle) {
 pub struct RetryTweaks {
     /// Download without concurrent fragments (`-N`).
     pub single_connection: bool,
-    /// Let yt-dlp pick its own YouTube player clients instead of our pinned
-    /// ones, so the attempt gets a freshly signed set of media URLs.
-    pub default_player_client: bool,
+}
+
+/// `--cookies <file>` or `--cookies-from-browser <name>` — spelled the same in
+/// yt-dlp and gallery-dl. A cookies.txt file wins over a browser.
+pub fn cookie_args(settings: &Settings) -> Vec<String> {
+    if !settings.cookies_file.trim().is_empty() {
+        vec!["--cookies".into(), settings.cookies_file.clone()]
+    } else if !settings.cookies_from_browser.trim().is_empty() {
+        vec![
+            "--cookies-from-browser".into(),
+            settings.cookies_from_browser.trim().to_string(),
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
+/// How every yt-dlp run reaches a site: proxy, browser impersonation and
+/// cookies. Analysis, the bitrate probe and the download all share this —
+/// whenever they differed, analysis rejected links the download could have
+/// fetched (a site that needs `--impersonate`, say), or the other way round.
+pub fn network_args(settings: &Settings) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    if !settings.proxy.trim().is_empty() {
+        args.extend(["--proxy".into(), settings.proxy.trim().to_string()]);
+    }
+    if !settings.impersonate.trim().is_empty() {
+        args.extend(["--impersonate".into(), settings.impersonate.trim().to_string()]);
+    }
+    args.extend(cookie_args(settings));
+    args
 }
 
 pub fn build_args(
@@ -556,17 +566,8 @@ pub fn build_args(
         args.extend(["--ffmpeg-location".into(), ffdir.to_string_lossy().into_owned()]);
     }
 
-    // The pinned player client and JS runtime (see youtube_extractor_args).
-    //
-    // A retry after an HTTP 403 drops the client pin instead: those media URLs
-    // are dead for good, so the retry is only worth anything if it re-extracts
-    // through different clients than the ones that just got refused. The JS
-    // runtime still applies — those clients need it more, not less.
-    if tweaks.default_player_client {
-        args.extend(js_runtime_args(app));
-    } else {
-        args.extend(youtube_extractor_args(app));
-    }
+    // The JS runtime for YouTube's challenges (see js_runtime_args).
+    args.extend(js_runtime_args(app));
 
     // Network
     if settings.concurrent_fragments > 1 && !tweaks.single_connection {
@@ -574,9 +575,6 @@ pub fn build_args(
     }
     if !settings.rate_limit.trim().is_empty() {
         args.extend(["--limit-rate".into(), settings.rate_limit.trim().to_string()]);
-    }
-    if !settings.proxy.trim().is_empty() {
-        args.extend(["--proxy".into(), settings.proxy.trim().to_string()]);
     }
     if settings.retries > 0 {
         args.extend(["--retries".into(), settings.retries.to_string()]);
@@ -587,17 +585,7 @@ pub fn build_args(
     if settings.sleep_requests > 0.0 {
         args.extend(["--sleep-requests".into(), settings.sleep_requests.to_string()]);
     }
-    if !settings.impersonate.trim().is_empty() {
-        args.extend(["--impersonate".into(), settings.impersonate.trim().to_string()]);
-    }
-    if !settings.cookies_file.is_empty() {
-        args.extend(["--cookies".into(), settings.cookies_file.clone()]);
-    } else if !settings.cookies_from_browser.is_empty() {
-        args.extend([
-            "--cookies-from-browser".into(),
-            settings.cookies_from_browser.clone(),
-        ]);
-    }
+    args.extend(network_args(settings));
 
     // Download archive
     if settings.use_download_archive {
@@ -684,26 +672,9 @@ pub fn build_args(
             args.extend(["--audio-quality".into(), arg]);
         }
 
-        // Joint stereo (mp3 CBR) and the sample rate both land on ffmpeg's
-        // ExtractAudio postprocessor — merged into one `ExtractAudio:` string
-        // rather than two separate --postprocessor-args, since yt-dlp doesn't
-        // promise to combine repeated keys for the same postprocessor.
-        if audio_format != "source" {
-            let mut pp_args: Vec<String> = Vec::new();
-            if is_lossy_audio(audio_format)
-                && audio_format == "mp3"
-                && resolve_audio_quality(opts) != "vbr"
-                && settings.joint_stereo
-            {
-                pp_args.push("-joint_stereo 1".into());
-            }
-            if let Some(rate) = resolve_sample_rate(opts, settings, audio_format) {
-                pp_args.push(format!("-ar {rate}"));
-            }
-            if !pp_args.is_empty() {
-                args.push("--postprocessor-args".into());
-                args.push(format!("ExtractAudio:{}", pp_args.join(" ")));
-            }
+        if let Some(pp) = extract_audio_pp_args(opts, settings, audio_format) {
+            args.push("--postprocessor-args".into());
+            args.push(pp);
         }
     } else {
         args.extend([
@@ -778,14 +749,7 @@ pub fn build_gallerydl_args(
 
     // Galleries are behind a login on most sites — Instagram redirects even
     // public posts to its sign-in page for an anonymous request.
-    if !settings.cookies_file.is_empty() {
-        args.extend(["--cookies".into(), settings.cookies_file.clone()]);
-    } else if !settings.cookies_from_browser.is_empty() {
-        args.extend([
-            "--cookies-from-browser".into(),
-            settings.cookies_from_browser.clone(),
-        ]);
-    }
+    args.extend(cookie_args(settings));
 
     // gallery-dl lays out <download dir>/<site>/<account>/… by itself, which
     // keeps a profile grab from flooding the top-level download folder.
@@ -873,6 +837,27 @@ fn shell_split(input: &str) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
+/// The `ExtractAudio:` postprocessor arguments for an audio task, if any.
+///
+/// Joint stereo (mp3 CBR) and the sample rate both land on ffmpeg's
+/// ExtractAudio postprocessor — merged into one `ExtractAudio:` string rather
+/// than two separate --postprocessor-args, since yt-dlp doesn't promise to
+/// combine repeated keys for the same postprocessor. "source" keeps the
+/// original stream, so nothing applies to it.
+fn extract_audio_pp_args(opts: &DownloadOptions, settings: &Settings, audio_format: &str) -> Option<String> {
+    if audio_format == "source" {
+        return None;
+    }
+    let mut pp_args: Vec<String> = Vec::new();
+    if audio_format == "mp3" && resolve_audio_quality(opts) != "vbr" && settings.joint_stereo {
+        pp_args.push("-joint_stereo 1".into());
+    }
+    if let Some(rate) = resolve_sample_rate(opts, settings, audio_format) {
+        pp_args.push(format!("-ar {rate}"));
+    }
+    (!pp_args.is_empty()).then(|| format!("ExtractAudio:{}", pp_args.join(" ")))
+}
+
 /// Formats that are lossy re-encodes and honour a bitrate/quality setting.
 fn is_lossy_audio(format: &str) -> bool {
     matches!(format, "mp3" | "aac" | "opus")
@@ -950,19 +935,12 @@ async fn probe_abr(app: &AppHandle, url: &str, settings: &Settings) -> Option<f6
         "--no-warnings",
     ]);
     cmd.args(ENCODING_ARGS);
-    // Extract through the same player client the download will use. Without
-    // this the probe hits YouTube's empty format lists, returns nothing, and
-    // "match source" quietly encodes at the 192 kbps fallback — below the
-    // source — on exactly the tracks the download itself handles fine.
-    cmd.args(youtube_extractor_args(app));
-    if !settings.proxy.trim().is_empty() {
-        cmd.args(["--proxy", settings.proxy.trim()]);
-    }
-    if !settings.cookies_file.is_empty() {
-        cmd.args(["--cookies", &settings.cookies_file]);
-    } else if !settings.cookies_from_browser.is_empty() {
-        cmd.args(["--cookies-from-browser", &settings.cookies_from_browser]);
-    }
+    // Extract the same way the download will. Without the JS runtime the probe
+    // hits YouTube's empty format lists, returns nothing, and "match source"
+    // quietly encodes at the 192 kbps fallback — below the source — on exactly
+    // the tracks the download itself handles fine.
+    cmd.args(js_runtime_args_async(app).await);
+    cmd.args(network_args(settings));
     cmd.arg("--").arg(url);
     cmd.stdin(std::process::Stdio::null());
     #[cfg(windows)]
@@ -978,6 +956,26 @@ async fn probe_abr(app: &AppHandle, url: &str, settings: &Settings) -> Option<f6
     let mut parts = line.trim().split('|');
     let abr = parts.next().and_then(parse_f64);
     abr.or_else(|| parts.next().and_then(parse_f64))
+}
+
+/// The file a yt-dlp output line names as where media is (or will be)
+/// written: a download/extraction destination, the merge target, the final
+/// move, or a file that was already there.
+fn destination_path(line: &str) -> Option<&str> {
+    static PATTERNS: LazyLock<[regex::Regex; 4]> = LazyLock::new(|| {
+        [
+            r#"^\[(?:download|ExtractAudio)\] Destination: (.+)$"#,
+            r#"^\[Merger\] Merging formats into "(.+)"$"#,
+            r#"^\[MoveFiles\] Moving file "(?:.+)" to "(.+)"$"#,
+            r#"^\[download\] (.+) has already been downloaded"#,
+        ]
+        .map(|re| regex::Regex::new(re).expect("valid destination pattern"))
+    });
+    PATTERNS
+        .iter()
+        .find_map(|re| re.captures(line))
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str())
 }
 
 /// Filename without its extension, for use as a display title.
@@ -997,11 +995,7 @@ fn parse_f64(field: &str) -> Option<f64> {
 }
 
 async fn run_download(app: AppHandle, mut task: DownloadTask) {
-    let settings = {
-        let state = app.state::<AppState>();
-        let s = state.settings.lock().unwrap();
-        s.clone()
-    };
+    let settings = settings_snapshot(&app);
 
     // "Match source" needs the source bitrate to pick a matching encode rate;
     // probe it when the task was queued without prior analysis (e.g. playlist
@@ -1030,12 +1024,21 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     };
     let tweaks = RetryTweaks {
         single_connection: task.force_single_connection,
-        default_player_client: task.use_default_player_client,
     };
-    let built = if gallery {
-        build_gallerydl_args(&task.options, &settings)
-    } else {
-        build_args(&app, &task.options, &settings, tweaks)
+    // Off the async runtime: building the arguments touches the disk, and the
+    // first build after a yt-dlp install runs `yt-dlp --help` once to see
+    // which flags it supports (ytdlp_supports_js_runtimes).
+    let built = {
+        let (app, opts, settings) = (app.clone(), task.options.clone(), settings.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            if gallery {
+                build_gallerydl_args(&opts, &settings)
+            } else {
+                build_args(&app, &opts, &settings, tweaks)
+            }
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()))
     };
     let args = match built {
         Ok(a) => a,
@@ -1044,6 +1047,14 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             return;
         }
     };
+
+    // The task was paused, cancelled or removed while the bitrate probe or
+    // the argument build ran — there was no process yet for that to kill.
+    if !task_status(&app, &task.id).is_some_and(TaskStatus::is_running) {
+        emit_queue(&app);
+        pump(&app);
+        return;
+    }
 
     let mut cmd = tokio::process::Command::new(&tool);
     force_utf8_io(&mut cmd);
@@ -1069,15 +1080,22 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         let state = app.state::<AppState>();
         state.pids.lock().unwrap().insert(task.id.clone(), pid);
     }
+    // A pause or cancel that landed between the check above and the pid
+    // being registered found nothing to kill. Honour it now, or the process
+    // would run to completion under a task that says it's paused.
+    if !task_status(&app, &task.id).is_some_and(TaskStatus::is_running) {
+        kill_task_process(&app, &task.id);
+        let _ = child.wait().await;
+        emit_queue(&app);
+        pump(&app);
+        return;
+    }
 
     // Fresh transcript for this run — a retry shouldn't mix in the previous
     // attempt's output.
     clear_log(&app, &task.id);
     if task.force_single_connection {
         push_log(&app, &task.id, "Retrying without concurrent fragments (-N) to rule out write contention.".into());
-    }
-    if task.use_default_player_client {
-        push_log(&app, &task.id, "Retrying with yt-dlp's default player clients to get fresh media URLs.".into());
     }
     push_log(&app, &task.id, format!("$ {} {}", tool.to_string_lossy(), args.join(" ")));
 
@@ -1104,17 +1122,12 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     });
 
     // Parse stdout progress.
-    let dest_re = regex::Regex::new(
-        r#"^\[(?:download|ExtractAudio)\] Destination: (.+)$"#,
-    )
-    .unwrap();
-    let merge_re = regex::Regex::new(r#"^\[Merger\] Merging formats into "(.+)"$"#).unwrap();
-    let move_re = regex::Regex::new(r#"^\[MoveFiles\] Moving file "(?:.+)" to "(.+)"$"#).unwrap();
-    let already_re =
-        regex::Regex::new(r#"^\[download\] (.+) has already been downloaded"#).unwrap();
-
     let mut saw_mfdone = false;
     let mut already_had = false;
+    // The output file as *this* run reported it. `task.filename` can't stand
+    // in for it: a retry inherits the previous attempt's path, and that file
+    // existing says nothing about whether this run produced anything.
+    let mut produced: Option<String> = None;
     if gallery {
         run_gallery_stdout(&app, &mut child, &task).await;
     } else if let Some(stdout) = child.stdout.take() {
@@ -1147,6 +1160,9 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                     let extractor_key = fields[0].trim();
                     let id = fields[1].trim();
                     let path = fields[2].trim().to_string();
+                    if !path.is_empty() {
+                        produced = Some(path.clone());
+                    }
                     let media_key = if !extractor_key.is_empty() && !id.is_empty() {
                         Some(format!("{extractor_key}:{id}"))
                     } else {
@@ -1206,13 +1222,9 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
                     }
                 });
                 force_emit = true;
-            } else if let Some(caps) = dest_re
-                .captures(line)
-                .or_else(|| merge_re.captures(line))
-                .or_else(|| move_re.captures(line))
-                .or_else(|| already_re.captures(line))
-            {
-                let path = caps.get(1).map(|m| m.as_str().to_string());
+            } else if let Some(path) = destination_path(line) {
+                let path = Some(path.to_string());
+                produced.clone_from(&path);
                 updated = with_task(&app, &task.id, |t| {
                     // A task queued without prior analysis has no title yet;
                     // the destination stem is the title as the output template
@@ -1245,10 +1257,9 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
         state.pids.lock().unwrap().remove(&task.id);
     }
 
-    // If the user paused or cancelled, the kill caused the non-zero exit —
-    // leave the status they chose in place.
-    let status_now = task_status(&app, &task.id);
-    if matches!(status_now, Some(TaskStatus::Paused) | Some(TaskStatus::Cancelled) | None) {
+    // If the user paused, cancelled or removed it, the kill caused the
+    // non-zero exit — leave the status they chose in place.
+    if !task_status(&app, &task.id).is_some_and(TaskStatus::is_running) {
         emit_queue(&app);
         pump(&app);
         return;
@@ -1257,12 +1268,11 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
     let exit_ok = exit.map(|s| s.success()).unwrap_or(false);
     // gallery-dl keeps its own per-file counting; a yt-dlp exit of 0 only
     // means something was produced once MFDONE fired or the destination file
-    // actually exists — it can also exit 0 having done nothing at all (an
-    // already-archived or unavailable item).
-    let file_exists = current_task(&app, &task.id)
-        .and_then(|t| t.filename)
-        .map(|f| std::path::Path::new(&f).exists())
-        .unwrap_or(false);
+    // this run named actually exists — it can also exit 0 having done nothing
+    // at all (an already-archived or unavailable item).
+    let file_exists = produced
+        .as_deref()
+        .is_some_and(|f| std::path::Path::new(f).exists());
     let media_produced = gallery || saw_mfdone || file_exists;
 
     if exit_ok && media_produced {
@@ -1309,13 +1319,15 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             // a moment to clear.
             //
             // What went wrong decides what the retry should do differently.
+            // A refused media URL is spent, but every run extracts afresh, so
+            // a longer pause (rate limiting) is all a 403/429 retry needs.
             //
-            // Both tweaks are yt-dlp flags, so a gallery-dl task just retries
-            // plainly — and gets a free resume, since gallery-dl skips the
-            // files the previous attempt already wrote.
+            // The write tweak is a yt-dlp flag, so a gallery-dl task just
+            // retries plainly — and gets a free resume, since gallery-dl
+            // skips the files the previous attempt already wrote.
             let (delay, note) = match failure {
                 _ if gallery => (3, ""),
-                FailureKind::Refused => (8, " with yt-dlp's default player clients"),
+                FailureKind::Refused => (8, " with freshly extracted media URLs"),
                 FailureKind::Write => (6, " without concurrent fragments"),
                 FailureKind::Auth | FailureKind::Other => (3, ""),
             };
@@ -1330,14 +1342,15 @@ async fn run_download(app: AppHandle, mut task: DownloadTask) {
             );
             tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
             with_task(&app, &task.id, |t| {
+                // Paused or cancelled during the pause above: the user's
+                // choice stands, rather than being re-queued over the top.
+                if !t.status.is_running() {
+                    return;
+                }
                 t.status = TaskStatus::Queued;
                 t.retry_count += 1;
-                if !gallery {
-                    match failure {
-                        FailureKind::Refused => t.use_default_player_client = true,
-                        FailureKind::Write => t.force_single_connection = true,
-                        FailureKind::Auth | FailureKind::Other => {}
-                    }
+                if !gallery && failure == FailureKind::Write {
+                    t.force_single_connection = true;
                 }
                 t.progress = 0.0;
                 t.downloaded_bytes = 0;
@@ -1654,16 +1667,50 @@ mod audio_tests {
             audio_sample_rate: "48000".into(),
             ..Default::default()
         };
-        let mut pp_args: Vec<String> = Vec::new();
-        if is_lossy_audio("mp3")
-            && resolve_audio_quality(&opts) != "vbr"
-            && settings.joint_stereo
-        {
-            pp_args.push("-joint_stereo 1".into());
-        }
-        if let Some(rate) = resolve_sample_rate(&opts, &settings, "mp3") {
-            pp_args.push(format!("-ar {rate}"));
-        }
-        assert_eq!(pp_args.join(" "), "-joint_stereo 1 -ar 48000");
+        assert_eq!(
+            extract_audio_pp_args(&opts, &settings, "mp3").as_deref(),
+            Some("ExtractAudio:-joint_stereo 1 -ar 48000")
+        );
+    }
+
+    #[test]
+    fn vbr_mp3_skips_joint_stereo_and_source_gets_no_postprocessor_args() {
+        let settings = Settings {
+            joint_stereo: true,
+            audio_sample_rate: "44100".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_audio_pp_args(&opts("vbr", None), &settings, "mp3").as_deref(),
+            Some("ExtractAudio:-ar 44100")
+        );
+        assert_eq!(extract_audio_pp_args(&opts("match", None), &settings, "source"), None);
+    }
+
+    #[test]
+    fn cookies_file_wins_over_a_browser_and_blanks_are_ignored() {
+        let mut settings = Settings {
+            cookies_file: "C:/c.txt".into(),
+            cookies_from_browser: "firefox".into(),
+            ..Default::default()
+        };
+        assert_eq!(cookie_args(&settings), ["--cookies", "C:/c.txt"]);
+        settings.cookies_file = "  ".into();
+        assert_eq!(cookie_args(&settings), ["--cookies-from-browser", "firefox"]);
+        settings.cookies_from_browser = String::new();
+        assert!(cookie_args(&settings).is_empty());
+    }
+
+    #[test]
+    fn destination_lines_name_the_output_file() {
+        assert_eq!(
+            destination_path("[ExtractAudio] Destination: C:\\Music\\a - b.mp3"),
+            Some("C:\\Music\\a - b.mp3")
+        );
+        assert_eq!(
+            destination_path("[Merger] Merging formats into \"C:\\v\\x.mkv\""),
+            Some("C:\\v\\x.mkv")
+        );
+        assert_eq!(destination_path("[download]  42.0% of 3.00MiB"), None);
     }
 }

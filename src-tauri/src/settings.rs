@@ -289,6 +289,9 @@ pub fn load(app: &AppHandle) -> Settings {
     if !settings.presets.iter().any(|p| p.id == settings.default_preset_id) {
         settings.default_preset_id = settings.presets[0].id.clone();
     }
+    // One-time migrations, each recorded in `migrations` so it never runs
+    // twice. Written back once at the end, not once per migration.
+    let mut migrated = false;
     // Seed the photos-and-videos preset once, and make it the Instagram
     // default — Instagram is the service whose links are usually pictures.
     // Both steps are skipped afterwards, so removing either one sticks.
@@ -301,14 +304,14 @@ pub fn load(app: &AppHandle) -> Settings {
             .service_presets
             .entry("instagram".into())
             .or_insert_with(|| SOCIAL_MEDIA_PRESET_ID.into());
-        let _ = save(app, &settings);
+        migrated = true;
     }
     // Theme used to be a dark/light toggle defaulting to dark; move existing
     // installs onto the new "follow the system" default once.
     if !settings.migrations.iter().any(|m| m == AUTO_THEME_MIGRATION) {
         settings.migrations.push(AUTO_THEME_MIGRATION.into());
         settings.theme = "auto".into();
-        let _ = save(app, &settings);
+        migrated = true;
     }
     // Seed the MP3 320 preset once, and make it the YouTube Music / SoundCloud
     // default — an existing user choice for either service is never
@@ -326,7 +329,7 @@ pub fn load(app: &AppHandle) -> Settings {
             .service_presets
             .entry("soundcloud".into())
             .or_insert_with(|| MUSIC_320_PRESET_ID.into());
-        let _ = save(app, &settings);
+        migrated = true;
     }
     // The onboarding flow is new; an install that already accepted the
     // disclaimer clearly isn't a first run, so it's marked done rather than
@@ -337,7 +340,7 @@ pub fn load(app: &AppHandle) -> Settings {
         if settings.disclaimer_accepted {
             settings.onboarding_completed = true;
         }
-        let _ = save(app, &settings);
+        migrated = true;
     }
     // Generalizes the yt-dlp-only toggle to every managed component. An
     // existing install's explicit choice carries over; a brand-new one gets
@@ -347,13 +350,18 @@ pub fn load(app: &AppHandle) -> Settings {
         if file_existed {
             settings.auto_update_components = settings.auto_update_ytdlp;
         }
+        migrated = true;
+    }
+    if migrated {
         let _ = save(app, &settings);
     }
     settings
 }
 
+/// Atomic, so a crash mid-write can't leave a truncated file — which would
+/// load as defaults and silently drop every preset and preference.
 pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let path = settings_path(app)?;
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    crate::fsutil::write_atomic(&path, json.as_bytes()).map_err(|e| e.to_string())
 }

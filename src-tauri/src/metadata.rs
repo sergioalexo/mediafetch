@@ -80,13 +80,9 @@ async fn analyze_gallery(
     // One item is enough to prove the extractor works, and --simulate keeps
     // it to metadata — nothing is written.
     cmd.args(["--simulate", "--range", "1-1"]);
-    if !settings.cookies_file.is_empty() {
-        cmd.args(["--cookies", &settings.cookies_file]);
-    } else if !settings.cookies_from_browser.is_empty() {
-        cmd.args(["--cookies-from-browser", &settings.cookies_from_browser]);
-    }
-    if !settings.proxy.is_empty() {
-        cmd.args(["--proxy", &settings.proxy]);
+    cmd.args(downloader::cookie_args(settings));
+    if !settings.proxy.trim().is_empty() {
+        cmd.args(["--proxy", settings.proxy.trim()]);
     }
     cmd.arg("--").arg(url);
     cmd.stdin(std::process::Stdio::null());
@@ -172,39 +168,34 @@ fn f(v: &Value, key: &str) -> Option<f64> {
     v.get(key).and_then(|x| x.as_f64())
 }
 
-/// One `yt-dlp -J` run. Returns the JSON on success, or (message, full stderr).
-async fn probe(
-    app: &AppHandle,
-    url: &str,
-    settings: &Settings,
-    pinned_client: bool,
-) -> Result<Vec<u8>, (String, String)> {
-    let ytdlp = binaries::ytdlp_path(app).map_err(|e| (e.clone(), e))?;
+/// `thumbnail`, or failing that the last (largest) of `thumbnails` — the only
+/// form flat-playlist entries (YouTube's included) carry one in.
+fn thumbnail_of(v: &Value) -> Option<String> {
+    s(v, "thumbnail").or_else(|| {
+        v.get("thumbnails")?
+            .as_array()?
+            .iter()
+            .rev()
+            .find_map(|t| s(t, "url"))
+    })
+}
+
+/// One `yt-dlp -J` run. Returns the JSON on success, or yt-dlp's error.
+async fn probe(app: &AppHandle, url: &str, settings: &Settings) -> Result<Vec<u8>, String> {
+    let ytdlp = binaries::ytdlp_path(app)?;
 
     let mut cmd = tokio::process::Command::new(&ytdlp);
     // Force UTF-8 stdio — piped output otherwise falls back to the OS ANSI
     // codepage, which mangles non-Latin titles and leaves the JSON below
     // undecodable (see downloader.rs).
-    cmd.env("PYTHONUTF8", "1");
-    cmd.env("PYTHONIOENCODING", "utf-8");
+    downloader::force_utf8_io(&mut cmd);
     cmd.args(["-J", "--flat-playlist", "--no-warnings", "--encoding", "utf-8"]);
-    // `-J` still runs format selection, so analysis fails on exactly the same
-    // empty format lists a download would — it has to extract through the same
-    // player clients the downloader uses, or it rejects links that would in
-    // fact have downloaded fine.
-    if pinned_client {
-        cmd.args(downloader::youtube_extractor_args(app));
-    } else {
-        cmd.args(downloader::js_runtime_args(app));
-    }
-    if !settings.proxy.is_empty() {
-        cmd.args(["--proxy", &settings.proxy]);
-    }
-    if !settings.cookies_file.is_empty() {
-        cmd.args(["--cookies", &settings.cookies_file]);
-    } else if !settings.cookies_from_browser.is_empty() {
-        cmd.args(["--cookies-from-browser", &settings.cookies_from_browser]);
-    }
+    // `-J` still runs format selection, so analysis has to reach the site
+    // exactly the way the download will — same JS runtime, proxy,
+    // impersonation and cookies — or it rejects links that would in fact
+    // have downloaded fine.
+    cmd.args(downloader::js_runtime_args_async(app).await);
+    cmd.args(downloader::network_args(settings));
     cmd.arg("--").arg(url);
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::piped());
@@ -234,23 +225,24 @@ async fn probe(
     let output = cmd
         .output()
         .await
-        .map_err(|e| (format!("Failed to run yt-dlp: {e}"), String::new()))?;
+        .map_err(|e| format!("Failed to run yt-dlp: {e}"))?;
     if output.status.success() {
         return Ok(output.stdout);
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    for line in stderr.lines().filter(|l| !l.trim().is_empty()) {
-        downloader::push_log(app, &log_id, line.trim_end().to_string());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let lines: Vec<&str> = stderr.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    for line in &lines {
+        downloader::push_log(app, &log_id, (*line).to_string());
     }
-    let last = stderr
-        .lines()
+    // The ERROR line is the one that says why; anything printed after it
+    // (a hint, a traceback tail) only matters when there isn't one.
+    Err(lines
+        .iter()
         .rev()
-        .find(|l| l.contains("ERROR") || !l.trim().is_empty())
-        .unwrap_or("yt-dlp failed")
-        .trim()
-        .to_string();
-    Err((last, stderr))
+        .find(|l| l.contains("ERROR"))
+        .or(lines.last())
+        .map_or_else(|| "yt-dlp failed".to_string(), |l| (*l).to_string()))
 }
 
 pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<AnalyzeResult, String> {
@@ -258,28 +250,15 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
     // user the previous attempt's noise.
     downloader::clear_log(app, &downloader::analyze_log_id(url));
 
-    let stdout = match probe(app, url, settings, true).await {
+    let stdout = match probe(app, url, settings).await {
         Ok(out) => out,
-        Err((message, stderr)) => {
-            // An empty format list is often just one bad extraction: yt-dlp's
-            // own client rotation gets a second, differently-signed shot at it.
-            let retried = if downloader::is_no_formats_error(&stderr) {
-                probe(app, url, settings, false).await
-            } else {
-                Err((message, stderr))
-            };
-            match retried {
-                Ok(out) => out,
-                Err((message, _)) => {
-                    // Photo posts and profile galleries are invisible to yt-dlp
-                    // — it only ever sees video formats — so a failure here is
-                    // exactly where gallery-dl earns its place.
-                    return match analyze_gallery(app, url, settings).await {
-                        Some(result) => result,
-                        None => Err(message),
-                    };
-                }
-            }
+        Err(message) => {
+            // Photo posts and profile galleries are invisible to yt-dlp — it
+            // only ever sees video formats — so a failure here is exactly
+            // where gallery-dl earns its place.
+            return analyze_gallery(app, url, settings)
+                .await
+                .unwrap_or(Err(message));
         }
     };
 
@@ -304,7 +283,7 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
                         title: s(e, "title").unwrap_or_else(|| "Untitled".into()),
                         url: s(e, "url").or_else(|| s(e, "webpage_url")).unwrap_or_default(),
                         duration: f(e, "duration"),
-                        thumbnail: s(e, "thumbnail"),
+                        thumbnail: thumbnail_of(e),
                     })
                     .collect()
             })
@@ -317,7 +296,7 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
             id: s(&info, "id").unwrap_or_default(),
             title: s(&info, "title").unwrap_or_else(|| "Playlist".into()),
             uploader: s(&info, "uploader").or_else(|| s(&info, "channel")),
-            thumbnail: None,
+            thumbnail: thumbnail_of(&info),
             duration: None,
             formats: vec![],
             subtitles: vec![],
@@ -399,7 +378,7 @@ pub async fn analyze(app: &AppHandle, url: &str, settings: &Settings) -> Result<
         id: s(&info, "id").unwrap_or_default(),
         title: s(&info, "title").unwrap_or_else(|| "Untitled".into()),
         uploader: s(&info, "uploader").or_else(|| s(&info, "channel")),
-        thumbnail: s(&info, "thumbnail"),
+        thumbnail: thumbnail_of(&info),
         duration: f(&info, "duration"),
         formats,
         subtitles,
